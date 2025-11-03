@@ -77,13 +77,15 @@ def read_image_bytes(image_bytes, expected_size, channels_first=True):
     return torch.tensor(image)
 
 def read_instances(data):
-    instances_data = json.loads(data)    
+    instances_data = json.loads(data)
+    
     instances = Instances3D()
     
     if len(instances_data) == 0:
         # Empty.
         instances.set("gt_ids", [])
-        instances.set("gt_names", [])        
+        instances.set("gt_names", [])
+        instances.set("gt_captions", [])                
         instances.set("gt_boxes_3d", empty_box(box_type))
         for src_key_2d, dst_key_2d in [("box_2d_rend", "gt_boxes_2d_trunc"), ("box_2d_proj", "gt_boxes_2d_proj")]:
             instances.set(dst_key_2d, np.empty((0, 4)))
@@ -91,7 +93,8 @@ def read_instances(data):
         return instances
 
     instances.set("gt_ids", [bi["id"] for bi in instances_data])
-    instances.set("gt_names", [bi["category"] for bi in instances_data])    
+    instances.set("gt_names", [bi["category"] for bi in instances_data])
+    instances.set("gt_captions", [bi.get("caption", "") for bi in instances_data])
     instances.set("gt_boxes_3d", GeneralInstance3DBoxes(
             np.concatenate((
                 np.array([bi["position"] for bi in instances_data]),
@@ -172,8 +175,8 @@ class CubifyAnythingDataset(webdataset.DataPipeline):
             # Don't map the world instances unless requested to (since these are timeless).
             if sample["__key__"].endswith("/world"):
                 if not self._yield_world_instances:
-                    continue            
-            
+                    continue
+
             yield self._map_sample(sample)            
 
 if __name__ == "__main__":

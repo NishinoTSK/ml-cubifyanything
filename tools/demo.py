@@ -46,7 +46,7 @@ def move_input_to_current_device(batched_input: Sensors, t: torch.Tensor):
 # A global dictionary we use to for consistent colors for instances across frames.
 ID_TO_COLOR = {}
 
-def log_instances(instances, prefix, boxes_3d_name="gt_boxes_3d", ids_name="gt_ids", log_instances_name="instances", **kwargs):
+def log_instances(instances, prefix, boxes_3d_name="gt_boxes_3d", ids_name="gt_ids", captions_name="gt_captions", log_instances_name="instances", **kwargs):
     global ID_TO_COLOR
     boxes_3d = instances.get(boxes_3d_name)
 
@@ -59,6 +59,19 @@ def log_instances(instances, prefix, boxes_3d_name="gt_boxes_3d", ids_name="gt_i
     else:
         ids = None
         colors = [random_color(rgb=True) for _ in range(len(instances))]
+
+    captions = None
+    if instances.has(captions_name):
+        captions = instances.get(captions_name)
+
+    # Make captions prominent, but include IDs if present.
+    if captions is not None:
+        labels = captions
+    else:
+        labels = len(instances) * [""]
+
+    if ids is not None:
+        labels = [f"{label} ({id})" if label else str(id) for label, id in zip(labels, ids)]
 
     quaternions = [
         rerun.Quaternion(
@@ -76,8 +89,8 @@ def log_instances(instances, prefix, boxes_3d_name="gt_boxes_3d", ids_name="gt_i
             sizes=boxes_3d.dims.cpu().numpy(),
             quaternions=quaternions,
             colors=colors,
-            labels=ids,
-            show_labels=False),
+            labels=labels,
+            show_labels=True),
         **kwargs)
 
 def load_data_and_visualize(dataset):
