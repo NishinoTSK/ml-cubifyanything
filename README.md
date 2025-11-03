@@ -3,6 +3,10 @@
 This repository includes the public implementation of Cubify Transformer and the
 associated CA-1M dataset (incl. the derived CA-VQA annotations).
 
+## News
+
+**09-2025:** CA-VQA code and links have been updated. The CA-1M data (and visualization) is updated to include **captions and attributes** used in the generation of the CA-VQA dataset.
+
 ## Papers
 
 **Apple**
@@ -98,7 +102,7 @@ specifics on how to read/parse data on disk. Some general pointers:
 [video_id]/[integer_timestamp].wide/image.png               # A 1024x768 RGB image corresponding to the main camera.
 [video_id]/[integer_timestamp].wide/depth.png               # A 256x192 depth image stored as a UInt16 (as millimeters) derived from the capture device's onboard LiDAR (ARKit depth).
 [video_id]/[integer_timestamp].wide/depth/confidence.tiff   # A 256x192 confidence image storing the [0, 1] confidence value of each depth measurement (currently unused).
-[video_id]/[integer_timestamp].wide/instances.json          # A list of GT instances alongside their 3D boxes (i.e., the resulting of the GT rendering process).
+[video_id]/[integer_timestamp].wide/instances.json          # A list of GT instances alongside their 3D boxes, captions, etc (i.e., the resulting of the GT rendering process).
 [video_id]/[integer_timestamp].wide/T_gravity.json          # A rotation matrix which encodes the pitch/roll of the camera, which we assume is known (e.g., IMU).
 
 [video_id]/[integer_timestamp].gt/RT.json                   # A 4x4 (row major) JSON-encoded matrix corresponding to the registered pose in the laser-scanner space.
