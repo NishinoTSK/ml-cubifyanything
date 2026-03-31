@@ -6,6 +6,7 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 import argparse
 import glob
 import itertools
+import json
 import numpy as np
 import rerun
 import rerun.blueprint as rrb
@@ -198,7 +199,59 @@ def unproject(depth, K, RT, max_depth=10.0):
 
     return world_xyz.T[..., :-1].reshape(uvd.shape[0], uvd.shape[1], 3), valid
 
-def load_data_and_execute_model(model, dataset, augmentor, preprocessor, score_thresh=0.0, viz_on_gt_points=False):
+def _to_builtin(x):
+    if isinstance(x, torch.Tensor):
+        x = x.detach().cpu().numpy()
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    return x
+
+def _safe_frame_stem(video_id, timestamp_seconds):
+    # Keep filenames stable and Windows-friendly.
+    return f"{int(video_id)}_{timestamp_seconds:.6f}".replace(".", "p")
+
+def save_pred_bboxes_json(pred_instances: Instances3D, sample_meta: dict, out_dir: str):
+    os.makedirs(out_dir, exist_ok=True)
+
+    video_id = sample_meta.get("video_id")
+    timestamp = sample_meta.get("timestamp")
+    image_h, image_w = pred_instances.image_size
+
+    dets = []
+    n = len(pred_instances) if pred_instances is not None else 0
+    for i in range(n):
+        det = {}
+        if pred_instances.has("pred_boxes"):
+            det["bbox_xyxy"] = _to_builtin(pred_instances.pred_boxes[i])
+        if pred_instances.has("scores"):
+            det["score"] = float(_to_builtin(pred_instances.scores[i]))
+        if pred_instances.has("pred_classes"):
+            det["class_id"] = int(_to_builtin(pred_instances.pred_classes[i]))
+        dets.append(det)
+
+    payload = {
+        "video_id": int(video_id) if video_id is not None else None,
+        "timestamp": float(timestamp) if timestamp is not None else None,
+        "image_size_hw": [int(image_h), int(image_w)],
+        "detections": dets,
+    }
+
+    # Optional: 3D boxes (if present) as well.
+    if pred_instances is not None and pred_instances.has("pred_boxes_3d"):
+        boxes3d = pred_instances.pred_boxes_3d
+        payload["boxes_3d"] = {
+            # In this codebase, gravity_center is (x,y,z); dims is (l,h,w) for GeneralInstance3DBoxes.tensor[:,3:6].
+            "gravity_center_xyz": _to_builtin(boxes3d.gravity_center),
+            "dims_lhw": _to_builtin(boxes3d.dims),
+            "R_3x3": _to_builtin(boxes3d.R),
+        }
+
+    stem = _safe_frame_stem(video_id if video_id is not None else 0, timestamp if timestamp is not None else 0.0)
+    out_path = os.path.join(out_dir, f"{stem}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+def load_data_and_execute_model(model, dataset, augmentor, preprocessor, score_thresh=0.0, viz_on_gt_points=False, save_preds_dir=None):
     is_depth_model = "wide/depth" in augmentor.measurement_keys
     blueprint = rrb.Blueprint(
         rrb.Vertical(
@@ -276,6 +329,9 @@ def load_data_and_execute_model(model, dataset, augmentor, preprocessor, score_t
             pred_instances = model(packaged)[0]
 
         pred_instances = pred_instances[pred_instances.scores >= score_thresh]
+
+        if save_preds_dir:
+            save_pred_bboxes_json(pred_instances, sample.get("meta", {}), save_preds_dir)
         
         # Hold off on logging anything until now, since the delay might confuse the user in the visualizer.
         rerun.log("/device/wide/image", rerun.Image(image).compress())
@@ -302,6 +358,7 @@ if __name__ == "__main__":
     parser.add_argument("--viz-on-gt-points", default=False, action="store_true", help="Backproject the GT depth to form a point cloud in order to visualize the predictions")
     parser.add_argument("--device", default="cpu", help="Which device to push the model to (cpu, mps, cuda)")
     parser.add_argument("--video-ids", nargs="+", help="Subset of videos to execute on. By default, all. Ignored if a tar file is explicitly given or in stream mode.")
+    parser.add_argument("--save-preds-dir", default=None, help="If set, saves a JSON per frame with predicted 2D boxes/scores/classes (and 3D boxes if available).")
 
     args = parser.parse_args()
     print("Command Line Args:", args)
@@ -375,4 +432,12 @@ if __name__ == "__main__":
     if args.device is not None:
         model = model.to(args.device)
 
-    load_data_and_execute_model(model, dataset, augmentor, preprocessor, score_thresh=args.score_thresh, viz_on_gt_points=args.viz_on_gt_points)
+    load_data_and_execute_model(
+        model,
+        dataset,
+        augmentor,
+        preprocessor,
+        score_thresh=args.score_thresh,
+        viz_on_gt_points=args.viz_on_gt_points,
+        save_preds_dir=args.save_preds_dir,
+    )

@@ -1,0 +1,22 @@
+*.tar
+*.rrd
+
+# Local data/models/outputs (do not commit)
+data/
+models/
+outputs/
+
+# Local extracted captures
+48458427/
+ca1m-val-*/
+ca1m-train-*/
+
+# Python caches
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Virtualenvs / local experiments
+teste/
+.venv/
+venv/
