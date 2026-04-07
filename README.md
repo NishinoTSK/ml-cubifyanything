@@ -6,22 +6,33 @@ Instalar o repositorio a partir do wsl
 --------------------------------------------------------
 
 git clone https://github.com/NishinoTSK/ml-cubifyanything
+
 cd ml_cubifyanythin
+
 virtualenv ambiente
+
+
 source ambiente/bin/activate
+
 Criar pasta models na pasta ml-cubifyanything e colocar os pesos dentro dela cutr_rgb.pth baixados daqui (RGB https://github.com/apple/ml-cubifyanything?tab=readme-ov-file.)
+
 pip install torch torchvision 
+
 pip install scipy
+
 pip install timm
+
 pip install webdataset==0.2.86
+
 pip install Pillow
+
 pip install tifffile
+
 pip install cyclonedds-nightly
+
 pip install rerun-sdk==0.19.1
 
-<!-- pip install -r requirements.txt -->
 pip install -e . --no-build-isolation
-
 
 Rodar inferencia na sua imagem
 
