@@ -17,6 +17,5 @@ __pycache__/
 *.pyc
 
 # Virtualenvs / local experiments
-teste/
 .venv/
 venv/
