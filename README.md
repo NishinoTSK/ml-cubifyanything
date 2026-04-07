@@ -10,7 +10,26 @@ cd ml_cubifyanythin
 virtualenv ambiente
 source ambiente/bin/activate
 Criar pasta models na pasta ml-cubifyanything e colocar os pesos dentro dela cutr_rgb.pth baixados daqui (RGB https://github.com/apple/ml-cubifyanything?tab=readme-ov-file.)
+pip install torch torchvision 
+pip install scipy
+pip install timm
+pip install webdataset==0.2.86
+pip install Pillow
+pip install tifffile
+pip install cyclonedds-nightly
+pip install rerun-sdk==0.19.1
 
+<!-- pip install -r requirements.txt -->
+pip install -e . --no-build-isolation
+
+
+Rodar inferencia na sua imagem
+
+WGPU_BACKEND=vulkan python tools/infer_image.py --image "teste/1.jpeg" --model-path models/cutr_rgb.pth --device cuda --score-thresh 0.25
+
+python tools/visualize_preds.py --image "teste/1.jpeg" --pred-json "teste/1_inf.json"
+
+WGPU_BACKEND=vulkan python tools/rerun_visualize_saved_preds.py --image "teste/1.jpeg" --pred-json "teste/1_inf.json"
 
 --------------------------------------------------------
 ## Novas Funcionalidades
