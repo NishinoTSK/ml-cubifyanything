@@ -1,297 +1,262 @@
-# CA-1M and Cubify Anything
+# Cubify Anything - Ferramentas de Inferência e Visualização
 
-This repository includes the public implementation of Cubify Transformer and the
-associated CA-1M dataset (incl. the derived CA-VQA annotations).
+Este repositório é um fork do [apple/ml-cubifyanything](https://github.com/apple/ml-cubifyanything) com ferramentas adicionais para exportação de predições, inferência em imagens arbitrárias e visualização offline.
 
-## News
+Instalar o repositorio a partir do wsl
+--------------------------------------------------------
 
-**09-2025:** CA-VQA code and links have been updated. The CA-1M data (and visualization) is updated to include **captions and attributes** used in the generation of the CA-VQA dataset.
+git clone https://github.com/NishinoTSK/ml-cubifyanything
+cd ml_cubifyanythin
+virtualenv ambiente
+source ambiente/bin/activate
+Criar pasta models na pasta ml-cubifyanything e colocar os pesos dentro dela cutr_rgb.pth baixados daqui (RGB https://github.com/apple/ml-cubifyanything?tab=readme-ov-file.)
 
-## Papers
 
-**Apple**
+--------------------------------------------------------
+## Novas Funcionalidades
 
-[Cubify Anything: Scaling Indoor 3D Object Detection](https://arxiv.org/abs/2412.04458)
+### 1. Exportação de Predições do Demo (`tools/demo.py`)
 
-Justin Lazarow, David Griffiths, Gefen Kohavi, Francisco Crespo, Afshin Dehghan
+Agora é possível salvar as predições do modelo em arquivos JSON para análise posterior ou visualização offline.
 
-**CVPR 2025**
-
-![Teaser](teaser.jpg?raw=true "Teaser")
-
-[MM-Spatial: Exploring 3D Spatial Understanding in Multimodal LLMs](https://arxiv.org/abs/2503.13111)
-
-Erik Daxberger, Nina Wenzel, David Griffiths, Haiming Gang, Justin Lazarow, Gefen Kohavi, Kai Kang, Marcin Eichner, Yinfei Yang, Afshin Dehghan, Peter Grasch
-
-**ICCV 2025**
-
-![Teaser (CA-VQA)](teaser_cavqa.png?raw=true "Teaser (CA-VQA)")
-
-## Repository Overview
-
-This repository includes:
-
-1. Links to the underlying data and annotations of the CA-1M dataset (incl. the derived CA-VQA annotations).
-2. Links to released models of the Cubify Transformer (CuTR) model from the Cubify Anything paper.
-3. Basic readers and inference code to run CuTR on the provided data.
-4. Basic support for using images captured from own device using the NeRF Capture app.
-
-## Installation
-
-We recommend Python 3.10 and a recent 2.x build of PyTorch. We include a `requirements.txt` which should encapsulate
-all necessary dependencies. Please make sure you have `torch` installed first, e.g.,:
-
+```bash
+python tools/demo.py data/val.txt \
+    --video-ids 42898570 \
+    --model-path models/cutr_rgb.pth \
+    --save-preds-dir outputs/preds \
+    --device cuda
 ```
+
+**Parâmetro novo:** `--save-preds-dir outputs/preds`
+
+Para cada frame processado, será criado um arquivo JSON com:
+- `video_id` e `timestamp` do frame
+- `image_size_hw`: dimensões da imagem
+- `detections`: lista de detecções com:
+  - `bbox_xyxy`: bounding box 2D em formato [x1, y1, x2, y2]
+  - `score`: confiança da detecção (0-1)
+  - `class_id`: classe (foreground/background)
+- `boxes_3d` (se disponível): caixas 3D com centro, dimensões e rotação
+
+**Exemplo de JSON salvo:**
+```json
+{
+  "video_id": 48458427,
+  "timestamp": 116505.351959,
+  "image_size_hw": [768, 1024],
+  "detections": [
+    {
+      "bbox_xyxy": [100.5, 200.3, 300.7, 400.2],
+      "score": 0.854,
+      "class_id": 1
+    }
+  ],
+  "boxes_3d": {
+    "gravity_center_xyz": [[1.2, 0.5, 2.1]],
+    "dims_lhw": [[0.3, 0.4, 0.2]],
+    "R_3x3": [[[...]]]
+  }
+}
+```
+
+---
+
+### 2. Inferência em Imagens Arbitrárias (`tools/infer_image.py`)
+
+Execute o modelo em qualquer imagem PNG/JPG, mesmo fora do dataset CA-1M.
+
+#### Modelo RGB (apenas imagem)
+
+```bash
+python tools/infer_image.py \
+    --image "minha_foto.png" \
+    --model-path models/cutr_rgb.pth \
+    --device cuda \
+    --score-thresh 0.25 \
+    --max-edge 1024
+```
+
+#### Modelo RGB-D (imagem + profundidade)
+
+```bash
+python tools/infer_image.py \
+    --image "minha_foto.png" \
+    --depth "minha_profundidade.png" \
+    --model-path models/cutr_rgbd.pth \
+    --device cuda
+```
+
+**Parâmetros:**
+
+| Parâmetro | Descrição | Padrão |
+|-----------|-----------|--------|
+| `--image` | Caminho para imagem RGB (obrigatório) | - |
+| `--model-path` | Caminho para o checkpoint .pth (obrigatório) | - |
+| `--device` | Dispositivo: cpu, cuda ou mps | cpu |
+| `--score-thresh` | Limiar de confiança para detecções | 0.25 |
+| `--max-edge` | Redimensiona imagem se o lado maior exceder este valor. Use 0 para desativar | 1024 |
+| `--out-json` | Caminho de saída do JSON. Padrão: `<imagem>_inf.json` | - |
+| `--fx`, `--fy`, `--cx`, `--cy` | Parâmetros intrínsecos da câmera (opcional) | estimado |
+| `--depth` | Imagem de profundidade UInt16 em mm (apenas para modelo RGB-D) | - |
+
+**Sobre os intrínsecos:**
+- Se não informados, são estimados com base nas dimensões da imagem
+- O modelo pode funcionar sem intrínsecos precisos, mas resultados 3D serão aproximados
+- Se você redimensionar a imagem (`--max-edge`) e informar intrínsecos, eles serão ajustados automaticamente
+
+---
+
+### 3. Visualização 2D Offline (`tools/visualize_preds.py`)
+
+Desenha bounding boxes 2D sobre a imagem e salva como PNG.
+
+```bash
+python tools/visualize_preds.py \
+    --image "minha_foto.png" \
+    --pred-json "minha_foto_inf.json" \
+    --score-thresh 0.25 \
+    --line-width 3
+```
+
+**Parâmetros:**
+
+| Parâmetro | Descrição | Padrão |
+|-----------|-----------|--------|
+| `--image` | Imagem original | - |
+| `--pred-json` | JSON de predições | - |
+| `--out` | Caminho de saída. Padrão: `<imagem>_inf.png` | - |
+| `--score-thresh` | Filtra detecções abaixo deste score | 0.0 |
+| `--no-labels` | Não mostrar labels nas caixas | - |
+| `--line-width` | Espessura das linhas das caixas | 3 |
+
+---
+
+### 4. Visualização 3D Offline com Rerun (`tools/rerun_visualize_saved_preds.py`)
+
+Visualiza predições no Rerun com suporte a 2D e 3D.
+
+```bash
+python tools/rerun_visualize_saved_preds.py \
+    --image "minha_foto.png" \
+    --pred-json "minha_foto_inf.json" \
+    --application-id "minha_cena"
+```
+
+**Funcionalidades:**
+- Mostra imagem RGB
+- Sobrepõe bounding boxes 2D
+- Mostra caixas 3D no espaço (se disponível no JSON)
+- Salva automaticamente um arquivo `.rrd` para visualização posterior
+
+**Arquivo .rrd gerado:**
+- Padrão: `<imagem>_inf.rrd`
+- Pode ser aberto posteriormente no Rerun Viewer
+
+---
+
+## Fluxo de Trabalho Completo
+
+### Exemplo 1: Dataset CA-1M com exportação
+
+```bash
+# 1. Processar dataset e salvar predições
+python tools/demo.py data/val.txt \
+    --video-ids 48458427 \
+    --model-path models/cutr_rgb.pth \
+    --save-preds-dir outputs/preds \
+    --device cuda
+
+# 2. Visualizar frame específico em 2D
+python tools/visualize_preds.py \
+    --image "ca1m-val-48458427/48458427/116505351959250.wide/image.png" \
+    --pred-json "outputs/preds/48458427_116505p351959.json" \
+    --no-labels
+
+# 3. Visualizar em 3D com Rerun
+python tools/rerun_visualize_saved_preds.py \
+    --image "ca1m-val-48458427/48458427/116505351959250.wide/image.png" \
+    --pred-json "outputs/preds/48458427_116505p351959.json"
+```
+
+### Exemplo 2: Imagem própria
+
+```bash
+# 1. Rodar inferência
+python tools/infer_image.py \
+    --image "foto_do_quarto.jpg" \
+    --model-path models/cutr_rgb.pth \
+    --device cuda \
+    --max-edge 1024
+
+# 2. Gerou: foto_do_quarto_inf.json
+
+# 3. Visualizar 2D
+python tools/visualize_preds.py \
+    --image "foto_do_quarto.jpg" \
+    --pred-json "foto_do_quarto_inf.json" \
+    --score-thresh 0.3
+
+# 4. Visualizar 3D
+python tools/rerun_visualize_saved_preds.py \
+    --image "foto_do_quarto.jpg" \
+    --pred-json "foto_do_quarto_inf.json"
+```
+
+---
+
+## Capturando Imagens com Intrínsecos
+
+### Opção 1: NeRF Capture (iOS, recomendado)
+
+Aplicativo oficial que fornece intrínsecos + pose + profundidade (se LiDAR disponível).
+
+1. Instale [NeRF Capture](https://apps.apple.com/au/app/nerfcapture/id6446518379)
+2. Use com streaming do `demo.py`:
+```bash
+python tools/demo.py stream --model-path models/cutr_rgbd.pth --device mps
+```
+
+### Opção 2: ARCore (Android)
+
+Apps com ARCore podem exportar intrínsecos. Procure por:
+- "Camera intrinsics"
+- "Calibration"
+- "fx, fy, cx, cy"
+
+Valores típicos para referência:
+- iPhone 12/13/14 (wide): fx ≈ fy ≈ 1200-1500 (varia com resolução)
+- Câmeras Android: consulte documentação do fabricante
+
+---
+
+## Requisitos
+
+Mesmos do repositório original:
+- Python 3.10+
+- PyTorch 2.x
+- Ver `requirements.txt`
+
+Instalação:
+```bash
 pip install torch torchvision
-```
-
-Then, within the root of the repository:
-
-```
 pip install -r requirements.txt
 pip install -e .
 ```
 
-## CA-1M versus ARKitScenes?
+---
 
-This work is related to [ARKitScenes](https://machinelearning.apple.com/research/arkitscenes). We generally share
-the same underlying captures. Some notable differences in CA-1M:
+## Licença
 
-1. Each scene has been exhaustively annotated with class-agnostic 3D boxes. We release these in the laser scanner's coordinate frame.
-2. For each frame in each capture, we include "per-frame" 3D box ground-truth which was produced using the rendering
-   process outlined in the Cubify Anything paper. These annotations are, therefore, *independent* of any pose.
+- Código original: Apple Sample Code License
+- Modificações: mantidas sob mesma licença
+- Modelos: Apple ML Research Model Terms of Use em [LICENSE_MODEL](LICENSE_MODEL)
 
-Some other nice things:
+---
 
-1. We release the GT poses (registered to laser scanner) for every frame in each capture.
-2. We release the GT depth (rendered from laser scanner) at 512 x 384 for every frame in each capture.
-3. Each frame has been already oriented into an upright position.
+## Créditos
 
-**NOTE:** CA-1M will only include captures which were successfully registered to the laser scanner. Therefore
-not every capture including in ARKitScenes will be present in CA-1M.
+Ferramentas adicionais desenvolvidas por [NishinoTSK](https://github.com/NishinoTSK).
 
-## Downloading the CA-1M data
-
-### License
-
-All data is released under the [CC-by-NC-ND](https://creativecommons.org/licenses/by-nc-nd/4.0/).
-
-All links to the data are contained in `data/train.txt` and `data/val.txt`. You can use `curl` to download all files
-listed. If you don't need the whole dataset in advance, you can either explicitly pass these
-links or pass the split's `txt` file itself and use the `--video-ids` argument to filter the desired videos.
-
-If you pass the `txt` file, please note that file will be cached under `data/[split]`.
-
-### CA-VQA
-
-The data links for CA-VQA are contained in `data/cavqa/val.txt` for the `val` split and in `data/cavqa/train_[task].txt` for the `train` splits of each task (`binary`, `cardinality`, `grounding2d`, `grounding3d`, `multichoice`, `regression`). 
-
-
-## Understanding the CA-1M data
-
-CA-1M is released in WebDataset format. Therefore, it is essentially a fancy tar archive
-*per* capture (i.e., a video). Therefore, a single archive `ca1m-[split]-XXXXXXX.tar` corresponds to all data
-of capture XXXXXXXX.
-
-Both splits are released at full frame rate.
-
-All data should be neatly loaded by `CubifyAnythingDataset`. Please refer to `dataset.py` for more
-specifics on how to read/parse data on disk. Some general pointers:
-
-```python
-[video_id]/[integer_timestamp].wide/image.png               # A 1024x768 RGB image corresponding to the main camera.
-[video_id]/[integer_timestamp].wide/depth.png               # A 256x192 depth image stored as a UInt16 (as millimeters) derived from the capture device's onboard LiDAR (ARKit depth).
-[video_id]/[integer_timestamp].wide/depth/confidence.tiff   # A 256x192 confidence image storing the [0, 1] confidence value of each depth measurement (currently unused).
-[video_id]/[integer_timestamp].wide/instances.json          # A list of GT instances alongside their 3D boxes, captions, etc (i.e., the resulting of the GT rendering process).
-[video_id]/[integer_timestamp].wide/T_gravity.json          # A rotation matrix which encodes the pitch/roll of the camera, which we assume is known (e.g., IMU).
-
-[video_id]/[integer_timestamp].gt/RT.json                   # A 4x4 (row major) JSON-encoded matrix corresponding to the registered pose in the laser-scanner space.
-[video_id]/[integer_timestamp].gt/depth.png                 # A 512x384 depth image stored as a UInt16 (as millimeters) derived from the FARO laser scanner registration.
-
-```
-
-Note that since we have already oriented the images, these dimensions may be transposed. GT depth may have 0 values which corresponding to unregistered points.
-
-An additional file is included as `[video_id]/world.gt/instances.json` which corresponds to the full world set of 3D annotations from which
-the per-frame labels are generated from. These instances include some structural labels: `wall`, `floor`, `ceiling`, `door_frame` which
-might aid in rendering.
-
-### CA-VQA
-
-We provide CA-VQA across the different tasks (`binary`, `cardinality`, `grounding2d`, `grounding3d`, `multichoice`, `regression`) in the format described below.
-
-#### Val split
-The `val` split of CA-VQA can be loaded (after unarchiving) via HuggingFace datasets:
-```python
-import datasets
-cavqa_val = datasets.load_from_disk("[path_to_cavqa_val_dir]")
-```
-
-This will provide a dictionary where each entry is a task's dataset with the following features:
-```python
-id: str                             # Unique ID of the data example.
-question: str                       # The question.
-answer: str                         # The ground truth answer of the question.
-reference_frame: dict               # The frame that the question refers to.
-support_frame_[1-4]: dict           # The preceding frames; order: [4, 3, 2, 1, reference].
-
-# Features of each frame.
-image['path']: str                  # Path to the RGB image (png) within the `images` folder.
-depth_map_ground_truth['path']: str # Path to the ground-truth depth map.
-depth_map_arkit['path']: str        # Path to the ARKit depth map.
-depth_map_monocular['path']: str    # Path to the monocular depth map.
-pose: List[List[float]]             # The pose (relative to the reference).
-intrinsics: List[List[float]]       # The intrinsics.
-```
-
-#### Train split
-The `train` split of each CA-VQA task can be loaded via TFDS:
-```python
-import tensorflow_datasets as tfds
-builder = tfds.builder_from_directory("[path_to_cavqa_train_dir]/[task]/1.0.0")
-cavqa_task_train = builder.as_dataset(split="train")
-```
-
-This will provide a dataset with the following features:
-```python
-questions: Tensor[str]                # The questions (referring to the reference frame).
-answers: Tensor[str]                  # The ground truth answers of the questions.
-images: Tensor[str]                   # The RGB images, with the reference frame coming last.
-depth_maps_ground_truth: Tensor[str]  # The ground-truth depth maps (same frame order as `images`).
-depth_maps_arkit: Tensor[str]         # The ARKit depth maps (same frame order as `images`).
-depth_maps_monocular: Tensor[str]     # The monocular depth maps (same frame order as `images`).
-poses: Tensor[float]                  # The poses (same frame order as `images`).
-intrinsics: Tensor[float]             # The intrinsics (same frame order as `images`).
-```
-
-## Visualization of the CA-1M data
-
-We include visualization support for CA-1M using [rerun](https://rerun.io). Visualization should happen
-automatically. If you wish to not run any models, but only visualize the data, use `--viz-only`.
-
-During inference, you may wish to inspect the 3D accuracy of the predictions. We support
-visualizing the predictions on the GT point cloud (derived from Faro depth) when using
-the `--viz-on-gt-points` flag.
-
-### Sample command
-
-``` bash
-python tools/demo.py [path_to_downloaded_data]/ca1m-val-42898570.tar --viz-only
-```
-
-``` bash
-python tools/demo.py data/train.txt --viz-only --video-ids 45261548
-```
-
-## Skipping Frames
-
-The data is provided at a high frame rate, so using `--every-nth-frame N` will only
-process every N frames.
-
-## Running the CuTR models
-
-All models are released under the Apple ML Research Model Terms of Use in [LICENSE_MODEL](LICENSE_MODEL).
-
-1. [RGB-D](https://ml-site.cdn-apple.com/models/cutr/cutr_rgbd.pth)
-2. [RGB](https://ml-site.cdn-apple.com/models/cutr/cutr_rgb.pth)
-
-Models can be provided to `demo.py` using the `--model-path` argument. We detect whether this is an RGB
-or RGB-D model and disable depth accordingly.
-
-### RGB-D
-
-The first variant of CuTR expects an RGB image and a metric depth map. We train on ARKit depth,
-although you may find it works with other metric depth estimators as well.
-
-#### Sample Command
-
-If your computer is MPS enabled:
-
-``` bash
-python tools/demo.py data/val.txt --video-ids 42898570 --model-path [path_to_models]/cutr_rgbd.pth --viz-on-gt-points --device mps
-```
-
-If your computer is CUDA enabled:
-
-``` bash
-python tools/demo.py data/val.txt --video-ids 42898570 --model-path [path_to_models]/cutr_rgbd.pth --viz-on-gt-points --device cuda
-```
-
-Otherwise:
-
-``` bash
-python tools/demo.py data/val.txt --video-ids 42898570 --model-path [path_to_models]/cutr_rgbd.pth --viz-on-gt-points --device cpu
-```
-
-### RGB Only
-
-The second variant of CuTR expects an RGB image alone and attempts to derive the metric scale of
-the scene from the image itself.
-
-#### Sample Command
-
-If your device is MPS enabled:
-
-``` bash
-python tools/demo.py data/val.txt --video-ids 42898570 --model-path [path_to_models]/cutr_rgb.pth --viz-on-gt-points --device mps
-```
-
-## Run on captures from your own device
-
-We also have basic support for running on RGB/Depth captured from your own device.
-
-1. Make sure you have [NeRF Capture](https://apps.apple.com/au/app/nerfcapture/id6446518379) installed on your device
-2. Start the NeRF Capture app *before* running `demo.py` (force quit and reopen if for some reason things stop working or a connection is not made).
-3. Run the normal commands but pass "stream" instead of the usual tar/folder path.
-4. Hit "Send" in the app to send a frame for inference. This will be visualized in the rerun window.
-
-We will continue to print "Still waiting" to show liveliness.
-
-If you have a device equipped with LiDAR, you can use this combined with the RGB-D models, otherwise, you can
-only use the RGB only model.
-
-#### RGB-D (on MPS)
-
-``` bash
-python tools/demo.py stream --model-path [path_to_models]/cutr_rgbd.pth --device mps
-```
-
-#### RGB (on MPS)
-
-``` bash
-python tools/demo.py stream --model-path [path_to_models]/cutr_rgb.pth --device mps
-```
-
-## Citations
-
-If you use CA-1M or CuTR in your research, please use the following entry:
-
-```
-@article{lazarow2024cubify,
-  title={Cubify Anything: Scaling Indoor 3D Object Detection},
-  author={Lazarow, Justin and Griffiths, David and Kohavi, Gefen and Crespo, Francisco and Dehghan, Afshin},
-  journal={arXiv preprint arXiv:2412.04458},
-  year={2024}
-}
-```
-
-If you use CA-VQA in your research, please use the following entry:
-
-```
-@article{daxberger2025mmspatial,
-  title={MM-Spatial: Exploring 3D Spatial Understanding in Multimodal LLMs},
-  author={Daxberger, Erik and Wenzel, Nina and Griffiths, David and Gang, Haiming and Lazarow, Justin and Kohavi, Gefen and Kang, Kai and Eichner, Marcin and Yang, Yinfei and Dehghan, Afshin and Grasch, Peter},
-  journal={arXiv preprint arXiv:2503.13111},
-  year={2025}
-}
-```
-
-## License
-
-The sample code is released under Apple Sample Code License.
-
-The data is released under [CC-by-NC-ND](https://creativecommons.org/licenses/by-nc-nd/4.0/).
-
-## Acknowledgements
-
-We use and acknowledge contributions from multiple open-source projects in [ACKNOWLEDGEMENTS](ACKNOWLEDGEMENTS).
+Baseado no trabalho original:
+- **Cubify Anything**: Justin Lazarow, David Griffiths, Gefen Kohavi, Francisco Crespo, Afshin Dehghan (Apple)
+- Paper: [arXiv:2412.04458](https://arxiv.org/abs/2412.04458)
