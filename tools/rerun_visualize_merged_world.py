@@ -116,8 +116,9 @@ def main():
     ap.add_argument(
         "--category-from",
         default="category",
-        choices=("category", "category_dino", "category_owlv2", "category_yolo"),
-        help="Which field to use as display label. Default: category (legacy canonical).",
+        choices=("category", "category_dino", "category_owlv2", "category_yolo", "label"),
+        help="Which field to use as display label. Default: category (legacy canonical). "
+             "Use 'label' to show the BLIP free-form caption.",
     )
     args = ap.parse_args()
 

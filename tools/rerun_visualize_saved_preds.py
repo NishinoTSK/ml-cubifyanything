@@ -66,8 +66,9 @@ def main():
     ap.add_argument(
         "--category-from",
         default="category",
-        choices=("category", "category_dino", "category_owlv2", "category_yolo"),
-        help="Which category field to display. Default: category (legacy canonical).",
+        choices=("category", "category_dino", "category_owlv2", "category_yolo", "label"),
+        help="Which field to display. Default: category (legacy canonical). "
+             "Use 'label' to show the BLIP free-form caption.",
     )
     args = ap.parse_args()
 
@@ -115,7 +116,10 @@ def main():
         boxes2d.append([x1, y1, x2, y2])
         score = det.get("score", None)
         class_id = det.get("class_id", None)
-        text_label = det.get(cat_key) or det.get("category")
+        if args.category_from == "label":
+            text_label = det.get("label")
+        else:
+            text_label = det.get(cat_key) or det.get("category")
         if text_label:
             any_text_label = True
             score_str = f" {float(score):.2f}" if score is not None else ""

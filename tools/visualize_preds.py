@@ -84,9 +84,13 @@ def draw_predictions(
             draw.rectangle([x1 - i, y1 - i, x2 + i, y2 + i], outline=color)
 
         if show_labels:
-            cat_key = f"category_{category_from}" if category_from in ("dino", "owlv2", "yolo") else "category"
-            cat = det.get(cat_key) or det.get("category")
-            caption = cat if cat else f"cls={class_id}"
+            if category_from == "label":
+                cat = det.get("label")
+                caption = cat if cat else f"cls={class_id}"
+            else:
+                cat_key = f"category_{category_from}" if category_from in ("dino", "owlv2", "yolo") else "category"
+                cat = det.get(cat_key) or det.get("category")
+                caption = cat if cat else f"cls={class_id}"
             label = str(caption)
             if score is not None:
                 label += f" {float(score):.2f}"
@@ -121,8 +125,9 @@ def main():
     ap.add_argument(
         "--category-from",
         default="category",
-        choices=("category", "category_dino", "category_owlv2", "category_yolo"),
-        help="Which category field to display on boxes. Default: category (legacy canonical).",
+        choices=("category", "category_dino", "category_owlv2", "category_yolo", "label"),
+        help="Which category field to display on boxes. Default: category (legacy canonical). "
+             "Use 'label' to show the BLIP free-form caption instead of a class name.",
     )
     ap.add_argument("--line-width", type=int, default=3, help="Box line width in pixels.")
     args = ap.parse_args()

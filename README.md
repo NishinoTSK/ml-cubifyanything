@@ -391,7 +391,7 @@ python tools/rerun_visualize_saved_preds.py --image teste/19.jpeg --pred-json te
 python tools/rerun_visualize_merged_world.py --room-json teste/room.json --category-from category_owlv2
 ```
 
-Valores aceitos: `category` (padrão), `category_dino`, `category_owlv2`, `category_yolo`.
+Valores aceitos: `category` (padrão), `category_dino`, `category_owlv2`, `category_yolo`, `label` (exibe o caption do BLIP ao invés da classe).
 
 ```bash
 python tools/visualize_preds.py --image teste/19.jpeg --pred-json teste/19_inf.json
