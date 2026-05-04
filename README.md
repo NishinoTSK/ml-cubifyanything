@@ -176,6 +176,8 @@ python tools/rerun_visualize_saved_preds.py \
     --application-id "minha_cena"
 ```
 
+Use `--no-labels` para esconder texto nas caixas 2D/3D (só geometria). O padrão é `--labels` (rótulos visíveis quando existirem no JSON).
+
 **Funcionalidades:**
 
 - Mostra imagem RGB
@@ -268,14 +270,17 @@ Valores típicos para referência:
 
 ---
 
-## Etiquetagem de Objetos (BLIP + Grounding-DINO)
+## Etiquetagem de Objetos (BLIP + Grounding-DINO / OWL-ViT v2)
 
-O CuTR só devolve `class_id` numérico. Para responder "onde está o sofá marrom?" você precisa de **rótulos semânticos**. Este projeto adiciona um etiquetador opcional, em **dois estágios complementares**:
+O CuTR só devolve `class_id` numérico. Para responder "onde está o sofá marrom?" você precisa de **rótulos semânticos**. O etiquetador opcional suporta **três backends**, todos no mesmo módulo (`tools/labeler.py`):
 
-- **BLIP** (`Salesforce/blip-image-captioning-base`) — gera uma descrição livre por *crop*, ex.: `"a wooden dining chair"`. Bom para responder consultas em linguagem natural.
-- **Grounding-DINO** (`IDEA-Research/grounding-dino-tiny`) — roda detecção open-vocab na imagem inteira com um vocabulário fechado (~80 classes em `tools/labeling_vocab_default.txt`) e atribui categoria via *2D-IoU match* (ex.: `"chair"`, score 0.78). Bom para filtragem rápida e busca por palavra-chave.
+| Backend | Tipo | Saída | Quando usar |
+|---|---|---|---|
+| **BLIP** (`Salesforce/blip-image-captioning-base`) | Caption por crop | `label`: `"a wooden dining chair"` | Respostas ricas em linguagem natural |
+| **Grounding-DINO** (`IDEA-Research/grounding-dino-tiny`) | Detecção open-vocab na imagem inteira + IoU match | `category` + `category_score` | Categorias padronizadas com confiança |
+| **OWL-ViT v2** (`google/owlv2-base-patch16-ensemble`) | Detecção open-vocab na imagem inteira + IoU match | `category` + `category_score` | Alternativa ao DINO; geralmente mais preciso em bboxes pequenas |
 
-Os dois ficam num módulo único (`tools/labeler.py`) e são plugados em **dois pontos**: na inferência única (`infer_image.py --label`) e no pós-processamento do `room.json` (`label_room.py`).
+Todos são plugados nos mesmos dois pontos: `infer_image.py --label` e `label_room.py`.
 
 ### Dependências
 
@@ -283,7 +288,9 @@ Os dois ficam num módulo único (`tools/labeler.py`) e são plugados em **dois 
 pip install transformers accelerate
 ```
 
-Primeira execução baixa ~~1-2 GB para `~~/.cache/huggingface` (BLIP base + Grounding-DINO tiny). Em seguida fica em cache.
+Primeira execução baixa modelos para `~/.cache/huggingface`:
+- BLIP base + DINO tiny: ~1-2 GB
+- OWL-ViT v2: ~1.5 GB extras
 
 ### Caminho 1 — Inferência única com etiquetagem
 
@@ -305,11 +312,20 @@ Flags disponíveis:
 | Flag              | Descrição                                          | Default                                 |
 | ----------------- | -------------------------------------------------- | --------------------------------------- |
 | `--label`         | Liga a etiquetagem (sem isso, comportamento atual) | off                                     |
-| `--label-backend` | `blip` | `dino` | `both` | `none`                  | `both`                                  |
-| `--vocab`         | Arquivo com classes (uma por linha) para o DINO    | `tools/labeling_vocab_default.txt`      |
-| `--blip-model`    | HF model id                                        | `Salesforce/blip-image-captioning-base` |
-| `--dino-model`    | HF model id                                        | `IDEA-Research/grounding-dino-tiny`     |
-| `--iou-min`       | IoU mínima do match DINO contra a bbox do CuTR     | `0.3`                                   |
+| `--label-backend` | `blip` \| `dino` \| `owlv2` \| `both` \| `both_owl` \| `none` | `both` |
+| `--vocab`         | Arquivo com classes (uma por linha) para o DINO/OWL | `tools/labeling_vocab_default.txt`     |
+| `--blip-model`    | HF model id para BLIP                              | `Salesforce/blip-image-captioning-base` |
+| `--dino-model`    | HF model id para Grounding-DINO                    | `IDEA-Research/grounding-dino-tiny`     |
+| `--owlv2-model`   | HF model id para OWL-ViT v2                        | `google/owlv2-base-patch16-ensemble`    |
+| `--iou-min`       | IoU mínima do match DINO/OWL contra a bbox do CuTR | `0.3`                                   |
+
+**Backends disponíveis:**
+- `blip` — só BLIP (caption livre)
+- `dino` — só Grounding-DINO (categoria padronizada + score)
+- `owlv2` — só OWL-ViT v2 (categoria padronizada + score; geralmente mais preciso que DINO em bboxes pequenas)
+- `both` — BLIP + DINO (padrão)
+- `both_owl` — BLIP + OWL-ViT v2
+- `none` — desabilita etiquetagem
 
 
 O `*_inf.json` ganha três campos por detecção:
@@ -332,9 +348,9 @@ O `*_inf.json` ganha três campos por detecção:
 }
 ```
 
-`label`/`category` ficam `null` quando o BLIP não devolve nada ou nenhuma saída do DINO atinge `iou-min`.
+`label` fica `null` quando o BLIP não devolve nada; `category`/`category_score` ficam `null` quando nenhuma saída do DINO atinge `iou-min`.
 
-Os visualizadores foram atualizados para mostrar esses campos automaticamente:
+Nos visualizadores (`visualize_preds.py`, `rerun_visualize_saved_preds.py`, `rerun_visualize_merged_world.py`) o texto da caixa usa **só** `category`. Sem categoria, mostra `cls=N` + score; o `label` permanece no JSON (ex.: busca semântica no app) mas **não** é usado como fallback na tela.
 
 ```bash
 python tools/visualize_preds.py --image teste/19.jpeg --pred-json teste/19_inf.json
@@ -383,20 +399,20 @@ Resultado em `objects[*]`:
 
 ### Tempos esperados (GPU)
 
+| Backend | Cenário | Tempo aproximado |
+|---|---|---|
+| DINO | Inferência única (~5-15 detecções) | 5-10 s |
+| OWL-ViT v2 | Inferência única (~5-15 detecções) | 6-12 s |
+| BLIP + DINO | `room.json` com ~25 objetos / ~10 imagens | 30-60 s |
+| BLIP + OWL-ViT v2 | `room.json` com ~25 objetos / ~10 imagens | 35-70 s |
+| Qualquer | Primeira execução (download de modelos) | +30-90 s extras |
 
-| Cenário                                   | Tempo aproximado |
-| ----------------------------------------- | ---------------- |
-| Inferência única (~5-15 detecções)        | 5-10 s           |
-| `room.json` com ~25 objetos / ~10 imagens | 30-60 s          |
-| Primeira execução (download de modelos)   | +30-90 s extras  |
-
-
-CPU funciona, mas é ~5-10× mais lento. Use `--label-backend dino` ou `--label-backend blip` para rodar só metade quando a outra não interessa.
+CPU funciona, mas é ~5-10× mais lento. Use `--label-backend owlv2` quando precisão de categoria for mais importante que DINO, ou `--label-backend both_owl` para ter BLIP + OWL-ViT juntos.
 
 ### Compatibilidade
 
 - Sem `--label`, `infer_image.py` produz exatamente o mesmo JSON que produzia antes.
-- Os campos `label`/`category`/`category_score` são opcionais em ambos os schemas; os visualizadores caem para `cls=N {score}` quando ausentes.
+- Os campos `label`/`category`/`category_score` são opcionais em ambos os schemas; na tela, sem `category`, os visualizadores caem para `cls=N {score}` (não usam `label` como fallback).
 
 ---
 
