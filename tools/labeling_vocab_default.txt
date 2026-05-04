@@ -1,0 +1,139 @@
+# Default open-vocabulary list for Grounding-DINO labeling of CuTR detections.
+# One class per line. Lowercase. Blank lines and lines starting with # are ignored.
+# Override with `--vocab path/to/file.txt`.
+
+# Seating
+chair
+office chair
+armchair
+sofa
+couch
+stool
+bench
+
+# Tables and desks
+table
+desk
+dining table
+coffee table
+nightstand
+side table
+
+# Beds and bedroom
+bed
+mattress
+pillow
+blanket
+bedsheet
+crib
+
+# Storage
+wardrobe
+closet
+shelf
+bookshelf
+cabinet
+drawer
+chest of drawers
+dresser
+trunk
+
+# Screens and electronics
+tv
+television
+monitor
+laptop
+computer
+keyboard
+mouse
+speaker
+remote
+phone
+tablet
+camera
+printer
+router
+game controller
+
+# Lighting
+lamp
+floor lamp
+table lamp
+ceiling light
+chandelier
+
+# Decoration
+mirror
+picture frame
+painting
+poster
+clock
+vase
+candle
+plant
+potted plant
+flower
+rug
+carpet
+curtain
+blinds
+
+# Doors / windows / structure
+door
+window
+fan
+heater
+air conditioner
+radiator
+
+# Kitchen / dining
+fridge
+refrigerator
+microwave
+oven
+stove
+sink
+dishwasher
+toaster
+kettle
+coffee machine
+bottle
+cup
+mug
+glass
+plate
+bowl
+pot
+pan
+
+# Bathroom
+toilet
+bathtub
+shower
+towel
+
+# Soft / personal
+backpack
+handbag
+suitcase
+shoe
+hat
+jacket
+book
+toy
+plush toy
+stuffed animal
+basket
+box
+trash can
+bin
+laundry basket
+
+# Misc
+guitar
+piano
+keyboard instrument
+bicycle
+treadmill
+exercise equipment
+ladder

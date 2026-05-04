@@ -90,7 +90,9 @@ def main():
     dets = preds.get("detections", []) or []
     boxes2d = []
     labels = []
+    labels_3d = []
     colors = []
+    any_text_label = False
     for i, det in enumerate(dets):
         bbox = det.get("bbox_xyxy", None)
         if not bbox or len(bbox) != 4:
@@ -99,10 +101,26 @@ def main():
         boxes2d.append([x1, y1, x2, y2])
         score = det.get("score", None)
         class_id = det.get("class_id", None)
-        if score is None:
+        text_label = det.get("label") or det.get("category")
+        if text_label:
+            any_text_label = True
+            score_str = f" {float(score):.2f}" if score is not None else ""
+            labels.append(f"{text_label}{score_str}")
+            labels_3d.append(str(text_label))
+        elif score is None:
             labels.append("" if class_id is None else f"{class_id}")
+            labels_3d.append("" if class_id is None else f"cls={class_id}")
         else:
-            labels.append(f"{class_id} {float(score):.3f}" if class_id is not None else f"{float(score):.3f}")
+            labels.append(
+                f"{class_id} {float(score):.3f}"
+                if class_id is not None
+                else f"{float(score):.3f}"
+            )
+            labels_3d.append(
+                f"cls={class_id} {float(score):.2f}"
+                if class_id is not None
+                else f"{float(score):.2f}"
+            )
 
         colors.append(list(_color_for_index(i)))
 
@@ -141,14 +159,19 @@ def main():
 
         if centers is not None and sizes is not None and Rmats is not None and len(centers) == len(sizes) == len(Rmats):
             quats_xyzw = Rotation.from_matrix(Rmats).as_quat().astype(np.float32)
+            box3d_kwargs = dict(
+                centers=centers,
+                sizes=sizes,
+                quaternions=[rerun.Quaternion(xyzw=q) for q in quats_xyzw],
+            )
+            if any_text_label and len(labels_3d) == len(centers):
+                box3d_kwargs["labels"] = labels_3d
+                box3d_kwargs["show_labels"] = True
+            else:
+                box3d_kwargs["show_labels"] = False
             rerun.log(
                 "/device/wide/pred_instances",
-                rerun.Boxes3D(
-                    centers=centers,
-                    sizes=sizes,
-                    quaternions=[rerun.Quaternion(xyzw=q) for q in quats_xyzw],
-                    show_labels=False,
-                ),
+                rerun.Boxes3D(**box3d_kwargs),
                 recording=recording,
             )
 

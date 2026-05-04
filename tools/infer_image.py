@@ -1,113 +1,65 @@
+"""CLI wrapper around CutrRunner for one-shot inference on a single image."""
+from __future__ import annotations
+
 import argparse
 import json
 import os
+import re
+import sys
 from pathlib import Path
+from typing import Optional
 
-import numpy as np
 import torch
 from PIL import Image
 
-from cubifyanything.measurement import ImageMeasurementInfo, DepthMeasurementInfo
-from cubifyanything.preprocessor import Augmentor, Preprocessor, move_input_to_current_device
-from cubifyanything.sensor import PosedSensorInfo, SensorArrayInfo
-from cubifyanything.cubify_transformer import make_cubify_transformer
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cutr_runtime import (  # noqa: E402
+    CutrRunner,
+    load_depth_image_mm_png,
+    make_default_intrinsics,
+)
 
-
-def _to_builtin(x):
-    if isinstance(x, torch.Tensor):
-        x = x.detach().cpu().numpy()
-    if isinstance(x, np.ndarray):
-        return x.tolist()
-    return x
+_DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
 
 
 def _safe_stem(p: Path):
-    # Windows-friendly filename stem.
     return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in p.stem)
 
 
-def save_pred_bboxes_json(pred_instances, image_path: Path, out_path: Path):
-    image_h, image_w = pred_instances.image_size
+def load_meta_json(meta_path: Path) -> dict:
+    """Read a Quest/Unity passthrough JSON, tolerating pt-BR comma decimals."""
+    raw = meta_path.read_text(encoding="utf-8")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        fixed = _DECIMAL_COMMA.sub(".", raw)
+        meta = json.loads(fixed)
+        print(
+            f"WARN: {meta_path.name} had comma decimals; auto-fixed in memory. "
+            f"Run tools/fix_decimal_commas.py on the source folder for a permanent fix."
+        )
+        return meta
 
-    dets = []
-    for i in range(len(pred_instances)):
-        det = {}
-        if pred_instances.has("pred_boxes"):
-            det["bbox_xyxy"] = _to_builtin(pred_instances.pred_boxes[i])
-        if pred_instances.has("scores"):
-            det["score"] = float(_to_builtin(pred_instances.scores[i]))
-        if pred_instances.has("pred_classes"):
-            det["class_id"] = int(_to_builtin(pred_instances.pred_classes[i]))
-        dets.append(det)
 
+def _meta_intrinsic(meta: Optional[dict], key: str) -> Optional[float]:
+    if not meta or key not in meta:
+        return None
+    try:
+        return float(meta[key])
+    except (TypeError, ValueError):
+        return None
+
+
+def save_pred_json(payload: dict, image_path: Path, out_path: Path):
     payload = {
         "source_image": str(image_path),
         "timestamp": None,
         "video_id": None,
-        "image_size_hw": [int(image_h), int(image_w)],
-        "detections": dets,
+        **payload,
     }
-
-    if pred_instances.has("pred_boxes_3d"):
-        boxes3d = pred_instances.pred_boxes_3d
-        payload["boxes_3d"] = {
-            "gravity_center_xyz": _to_builtin(boxes3d.gravity_center),
-            "dims_lhw": _to_builtin(boxes3d.dims),
-            "R_3x3": _to_builtin(boxes3d.R),
-        }
-
     os.makedirs(out_path.parent, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-
-
-def load_rgb_image(path: Path, max_edge: int | None = None) -> tuple[torch.Tensor, float]:
-    img = Image.open(str(path)).convert("RGB")
-    scale = 1.0
-    if max_edge is not None:
-        w, h = img.size
-        longest = max(w, h)
-        if longest > max_edge:
-            scale = float(max_edge) / float(longest)
-            new_w = max(1, int(round(w * scale)))
-            new_h = max(1, int(round(h * scale)))
-            img = img.resize((new_w, new_h), resample=Image.BILINEAR)
-
-    # np.asarray(PIL) can be read-only; copy to avoid PyTorch warning.
-    arr = np.asarray(img).copy()  # HWC, uint8
-    t = torch.from_numpy(arr).permute(2, 0, 1).contiguous()  # CHW
-    return t, scale
-
-
-def load_depth_image_mm_png(path: Path) -> torch.Tensor:
-    # Expect a single-channel PNG where values are millimeters (UInt16), like CA-1M.
-    img = Image.open(str(path))
-    arr = np.asarray(img)
-    if arr.ndim != 2:
-        raise ValueError(f"Expected single-channel depth image, got shape={arr.shape}")
-    if arr.dtype != np.uint16 and arr.dtype != np.int32 and arr.dtype != np.int64:
-        # PIL may give uint16, but guard.
-        arr = arr.astype(np.uint16)
-    depth_m = torch.from_numpy(arr.astype(np.float32)) / 1000.0
-    return depth_m
-
-
-def make_default_intrinsics(w: int, h: int) -> torch.Tensor:
-    # A reasonable default when intrinsics are unknown.
-    # This is not "correct" physically, but lets the model run.
-    fx = float(max(w, h))
-    fy = float(max(w, h))
-    cx = float(w) * 0.5
-    cy = float(h) * 0.5
-    K = torch.tensor(
-        [
-            [fx, 0.0, cx],
-            [0.0, fy, cy],
-            [0.0, 0.0, 1.0],
-        ],
-        dtype=torch.float32,
-    )
-    return K
 
 
 def main():
@@ -121,120 +73,152 @@ def main():
         default=None,
         help="Output JSON path. Default: <image>_inf.json in same folder.",
     )
-    ap.add_argument(
-        "--fx",
-        type=float,
-        default=None,
-        help="Optional camera fx in pixels (if omitted, uses a default based on image size).",
-    )
+    ap.add_argument("--fx", type=float, default=None, help="Optional camera fx in pixels.")
     ap.add_argument("--fy", type=float, default=None, help="Optional camera fy in pixels.")
     ap.add_argument("--cx", type=float, default=None, help="Optional camera cx in pixels.")
     ap.add_argument("--cy", type=float, default=None, help="Optional camera cy in pixels.")
     ap.add_argument(
+        "--meta-json",
+        default=None,
+        help="Optional path to a passthrough JSON with fx/fy/cx/cy (Unity/Quest "
+             "capture). Explicit --fx/--fy/--cx/--cy still take precedence.",
+    )
+    ap.add_argument(
         "--max-edge",
         type=int,
         default=1024,
-        help="If the image is larger than this on its longest edge, it will be resized down (keeps aspect ratio). Use 0 to disable.",
+        help="Resize so the longest edge fits this. Use 0 to disable.",
     )
     ap.add_argument(
         "--depth",
         default=None,
-        help="Optional depth image path (UInt16 PNG in millimeters). Required if using an RGB-D model.",
+        help="Optional depth image path (UInt16 PNG in millimeters). Required for RGB-D models.",
+    )
+    # Labeling (BLIP free-form caption + Grounding-DINO open-vocab category).
+    ap.add_argument(
+        "--label",
+        action="store_true",
+        help="After CuTR, run BLIP/Grounding-DINO to enrich each detection with label/category.",
+    )
+    ap.add_argument(
+        "--label-backend",
+        default="both",
+        choices=("blip", "dino", "both", "none"),
+        help="Which labeling models to load. Default: both.",
+    )
+    ap.add_argument(
+        "--vocab",
+        default=None,
+        help="Path to vocab file (one class per line). Default: tools/labeling_vocab_default.txt",
+    )
+    ap.add_argument(
+        "--blip-model",
+        default="Salesforce/blip-image-captioning-base",
+        help="HF model id for BLIP captioning.",
+    )
+    ap.add_argument(
+        "--dino-model",
+        default="IDEA-Research/grounding-dino-tiny",
+        help="HF model id for Grounding-DINO.",
+    )
+    ap.add_argument(
+        "--iou-min",
+        type=float,
+        default=0.3,
+        help="Min IoU for matching CuTR bbox to a Grounding-DINO output.",
     )
     args = ap.parse_args()
 
     image_path = Path(args.image)
-    model_path = Path(args.model_path)
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model not found: {model_path}")
 
-    # Load checkpoint and detect backbone size + depth modality.
-    checkpoint = torch.load(str(model_path), map_location=args.device or "cpu")["model"]
-    backbone_embedding_dimension = checkpoint["backbone.0.patch_embed.proj.weight"].shape[0]
-    is_depth_model = any(k.startswith("backbone.0.patch_embed_depth.") for k in checkpoint.keys())
+    meta: Optional[dict] = None
+    if args.meta_json:
+        meta_path = Path(args.meta_json)
+        if not meta_path.exists():
+            raise FileNotFoundError(f"Meta JSON not found: {meta_path}")
+        meta = load_meta_json(meta_path)
 
-    model = make_cubify_transformer(dimension=backbone_embedding_dimension, depth_model=is_depth_model).eval()
-    model.load_state_dict(checkpoint)
-    model = model.to(args.device)
+    runner = CutrRunner(model_path=args.model_path, device=args.device)
 
-    max_edge = None if (args.max_edge is None or int(args.max_edge) <= 0) else int(args.max_edge)
-    rgb, resize_scale = load_rgb_image(image_path, max_edge=max_edge)
-    h, w = int(rgb.shape[1]), int(rgb.shape[2])
+    img = Image.open(str(image_path)).convert("RGB")
+    w_orig, h_orig = img.size
 
-    K = make_default_intrinsics(w, h)
-    if args.fx is not None:
-        K[0, 0] = float(args.fx)
-    if args.fy is not None:
-        K[1, 1] = float(args.fy)
-    if args.cx is not None:
-        K[0, 2] = float(args.cx)
-    if args.cy is not None:
-        K[1, 2] = float(args.cy)
+    fx = args.fx if args.fx is not None else _meta_intrinsic(meta, "fx")
+    fy = args.fy if args.fy is not None else _meta_intrinsic(meta, "fy")
+    cx = args.cx if args.cx is not None else _meta_intrinsic(meta, "cx")
+    cy = args.cy if args.cy is not None else _meta_intrinsic(meta, "cy")
 
-    # If we resized the image and the user provided intrinsics, assume they corresponded
-    # to the original image and scale them down accordingly.
-    if resize_scale != 1.0 and any(v is not None for v in (args.fx, args.fy, args.cx, args.cy)):
-        K[:2, :] *= float(resize_scale)
+    K_user = None
+    if any(v is not None for v in (fx, fy, cx, cy)):
+        K_user = make_default_intrinsics(w_orig, h_orig)
+        if fx is not None:
+            K_user[0, 0] = float(fx)
+        if fy is not None:
+            K_user[1, 1] = float(fy)
+        if cx is not None:
+            K_user[0, 2] = float(cx)
+        if cy is not None:
+            K_user[1, 2] = float(cy)
+        src = "cli" if any(v is not None for v in (args.fx, args.fy, args.cx, args.cy)) and meta is None else \
+              "meta" if all(v is None for v in (args.fx, args.fy, args.cx, args.cy)) and meta is not None else \
+              "cli+meta"
+        print(
+            f"Intrinsics ({src}): fx={fx}, fy={fy}, cx={cx}, cy={cy} "
+            f"(image {w_orig}x{h_orig})"
+        )
 
-    wide = PosedSensorInfo()
-    wide.RT = torch.eye(4, dtype=torch.float32)[None]
-    wide.T_gravity = torch.eye(3, dtype=torch.float32)[None]
-    wide.image = ImageMeasurementInfo(size=(w, h), K=K[None])
-
-    sample = {
-        "sensor_info": SensorArrayInfo(wide=wide),
-        "wide": {
-            "image": rgb[None],  # (1, C, H, W)
-        },
-        "meta": {
-            "video_id": None,
-            "timestamp": None,
-        },
-    }
-
-    if is_depth_model:
+    depth_m = None
+    if runner.is_depth_model:
         if args.depth is None:
-            raise ValueError("This checkpoint is an RGB-D model; pass --depth <path_to_depth_png>.")
+            raise ValueError("This checkpoint is RGB-D; pass --depth <path_to_depth_png>.")
         depth_path = Path(args.depth)
         if not depth_path.exists():
             raise FileNotFoundError(f"Depth not found: {depth_path}")
         depth_m = load_depth_image_mm_png(depth_path)
 
-        # If depth resolution differs, just resize to RGB for convenience.
-        if depth_m.shape[0] != h or depth_m.shape[1] != w:
-            depth_img = Image.fromarray(depth_m.numpy())
-            depth_img = depth_img.resize((w, h), resample=Image.NEAREST)
-            depth_m = torch.from_numpy(np.asarray(depth_img).astype(np.float32))
+    max_edge = None if (args.max_edge is None or int(args.max_edge) <= 0) else int(args.max_edge)
 
-        wide.depth = DepthMeasurementInfo(size=(w, h), K=K[None])
-        sample["wide"]["depth"] = depth_m[None]
+    pred = runner.infer(
+        image=img,
+        K=K_user,
+        depth_m=depth_m,
+        score_thresh=float(args.score_thresh),
+        max_edge=max_edge,
+    )
 
-    augmentor = Augmentor(("wide/image", "wide/depth") if is_depth_model else ("wide/image",))
-    # The default Preprocessor only supports square_pad up to 1024, so for larger images
-    # choose a square pad that fits the longest edge and respects size_divisibility.
-    longest_edge = max(w, h)
-    size_div = 32
-    square_pad = int(np.ceil(longest_edge / size_div) * size_div)
-    preprocessor = Preprocessor(square_pad=square_pad, size_divisibility=size_div)
+    if args.label and pred.get("detections"):
+        from labeler import Labeler  # noqa: E402
 
-    # Match tools/demo.py: move to device BEFORE preprocessing/batching, while we still
-    # have per-measurement objects that implement `.to(...)`.
-    packaged = augmentor.package(sample)
-    packaged = move_input_to_current_device(packaged, model.pixel_mean)
-    packaged = preprocessor.preprocess([packaged])
+        ih, iw = pred["image_size_hw"]
+        # bbox_xyxy is in image_size_hw pixel space; resize the original image to
+        # match before captioning so BLIP/DINO see the same coordinates as CuTR.
+        if (img.size[1], img.size[0]) != (int(ih), int(iw)):
+            img_for_label = img.resize((int(iw), int(ih)), resample=Image.BILINEAR)
+        else:
+            img_for_label = img
 
-    with torch.no_grad():
-        pred_instances = model(packaged)[0]
+        vocab_path = Path(args.vocab) if args.vocab else None
+        labeler = Labeler(
+            backend=args.label_backend,
+            vocab_path=vocab_path,
+            device=args.device,
+            blip_model=args.blip_model,
+            dino_model=args.dino_model,
+            iou_min=float(args.iou_min),
+        )
+        labeler.label_detections(img_for_label, pred["detections"])
+        n_labeled = sum(1 for d in pred["detections"] if d.get("label") or d.get("category"))
+        print(f"Labeled {n_labeled}/{len(pred['detections'])} detections.")
 
-    pred_instances = pred_instances[pred_instances.scores >= float(args.score_thresh)]
-
-    out_json = Path(args.out_json) if args.out_json else image_path.with_name(_safe_stem(image_path) + "_inf.json")
-    save_pred_bboxes_json(pred_instances, image_path=image_path, out_path=out_json)
+    out_json = (
+        Path(args.out_json) if args.out_json
+        else image_path.with_name(_safe_stem(image_path) + "_inf.json")
+    )
+    save_pred_json(pred, image_path=image_path, out_path=out_json)
     print(f"Saved JSON: {out_json}")
 
 
 if __name__ == "__main__":
     main()
-
