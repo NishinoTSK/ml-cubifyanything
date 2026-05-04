@@ -32,6 +32,10 @@ pip install rerun-sdk==0.19.1
 
 pip install -e . --no-build-isolation
 
+pip install transformers accelerate
+
+pip install ultralytics   # necessário apenas para YOLO-World
+
 Rodar inferencia na sua imagem
 
 WGPU_BACKEND=vulkan python tools/infer_image.py --image "teste/1.jpeg" --model-path models/cutr_rgb.pth --device cuda --score-thresh 0.25
