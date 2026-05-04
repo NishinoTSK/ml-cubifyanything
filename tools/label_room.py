@@ -5,12 +5,11 @@ synthesize a single fake CuTR detection from ``evidence.best_bbox``, and run
 the shared :class:`tools.labeler.Labeler` to fill in:
 
 - ``label``           : free-form BLIP caption.
-- ``category``        : Grounding-DINO closed-set match.
-- ``category_score``  : confidence score for ``category``.
+- ``category``        : closed-set match from DINO / OWL-ViT / RAM.
+- ``category_score``  : confidence score for ``category`` (DINO/OWL only).
 
-Grounding-DINO is run once per *unique image* (so labeling N objects sharing
-the same best_frame is much cheaper than N runs). BLIP runs once per object,
-on the crop defined by ``best_bbox``.
+Image-wide detectors (DINO, OWL-ViT) are run once per *unique image*.
+BLIP and RAM run once per object (crop-based).
 
 Usage:
     python tools/label_room.py \
@@ -30,7 +29,7 @@ from typing import Dict, List, Optional
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from labeler import Labeler, _bbox_iou  # noqa: E402
+from labeler import Labeler  # noqa: E402
 
 
 def _load_image(captures_dir: Path, frame_name: str) -> Optional[Image.Image]:
@@ -54,6 +53,7 @@ def label_room(
     device: str,
     blip_model: str,
     dino_model: str,
+    owlv2_model: str,
     iou_min: float,
     score_thresh_dino: float,
     text_thresh_dino: float,
@@ -70,8 +70,7 @@ def label_room(
         return
 
     print(
-        f"Loading labeler (backend={backend}, blip={blip_model if backend in ('blip','both') else '-'}, "
-        f"dino={dino_model if backend in ('dino','both') else '-'}, device={device})..."
+        f"Loading labeler (backend={backend}, device={device})..."
     )
     labeler = Labeler(
         backend=backend,
@@ -79,6 +78,7 @@ def label_room(
         device=device,
         blip_model=blip_model,
         dino_model=dino_model,
+        owlv2_model=owlv2_model,
         iou_min=float(iou_min),
         score_thresh_dino=float(score_thresh_dino),
         text_thresh_dino=float(text_thresh_dino),
@@ -108,42 +108,29 @@ def label_room(
                 objects[idx].setdefault("category_score", None)
             continue
 
-        # Run DINO once per frame, then attribute by IoU to each object's bbox.
-        dino_out = labeler._dino_full_image(img) if labeler.use_dino else None
-
+        # Build synthetic detections so Labeler.label_detections does all routing.
+        synth_dets = []
         for idx in idxs:
             obj = objects[idx]
             bbox = obj["evidence"]["best_bbox"]
+            synth_dets.append({
+                "bbox_xyxy": bbox,
+                "score": float(obj.get("score", 0.0)),
+                "_room_idx": idx,
+            })
 
-            if labeler.use_blip:
-                from labeler import _crop_with_padding  # noqa: WPS433
-                crop = _crop_with_padding(img, bbox, pad=4)
-                cap = labeler._caption_crop(crop) if crop is not None else None
-                obj["label"] = cap
-                if cap:
-                    n_labeled += 1
-            else:
-                obj.setdefault("label", None)
+        labeler.label_detections(img, synth_dets)
 
-            if labeler.use_dino and dino_out and dino_out["boxes"]:
-                best_iou = -1.0
-                best_idx = -1
-                for k, b in enumerate(dino_out["boxes"]):
-                    iou = _bbox_iou(bbox, b)
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_idx = k
-                if best_idx >= 0 and best_iou >= labeler.iou_min:
-                    obj["category"] = dino_out["labels"][best_idx] or None
-                    obj["category_score"] = float(dino_out["scores"][best_idx])
-                    if obj["category"]:
-                        n_categorized += 1
-                else:
-                    obj["category"] = None
-                    obj["category_score"] = None
-            else:
-                obj.setdefault("category", None)
-                obj.setdefault("category_score", None)
+        for sd in synth_dets:
+            idx = sd["_room_idx"]
+            obj = objects[idx]
+            obj["label"] = sd.get("label")
+            obj["category"] = sd.get("category")
+            obj["category_score"] = sd.get("category_score")
+            if obj.get("label"):
+                n_labeled += 1
+            if obj.get("category"):
+                n_categorized += 1
 
         print(f"  {frame}: labeled {len(idxs)} object(s)")
 
@@ -174,13 +161,21 @@ def main():
     ap.add_argument(
         "--label-backend",
         default="both",
-        choices=("blip", "dino", "both", "none"),
-        help="Which labeling models to load.",
+        choices=(
+            "blip", "dino", "owlv2",
+            "both", "both_owl", "none",
+        ),
+        help="Which labeling models to load. Default: both.",
     )
-    ap.add_argument("--vocab", default=None, help="Vocab file for Grounding-DINO.")
+    ap.add_argument(
+        "--vocab",
+        default=None,
+        help="Vocab file for DINO/OWL-ViT. Default: tools/labeling_vocab_default.txt",
+    )
     ap.add_argument("--device", default="cuda", help="cpu|cuda|mps")
     ap.add_argument("--blip-model", default="Salesforce/blip-image-captioning-base")
     ap.add_argument("--dino-model", default="IDEA-Research/grounding-dino-tiny")
+    ap.add_argument("--owlv2-model", default="google/owlv2-base-patch16-ensemble")
     ap.add_argument("--iou-min", type=float, default=0.3)
     ap.add_argument("--score-thresh-dino", type=float, default=0.25)
     ap.add_argument("--text-thresh-dino", type=float, default=0.20)
@@ -195,6 +190,7 @@ def main():
         device=args.device,
         blip_model=args.blip_model,
         dino_model=args.dino_model,
+        owlv2_model=args.owlv2_model,
         iou_min=float(args.iou_min),
         score_thresh_dino=float(args.score_thresh_dino),
         text_thresh_dino=float(args.text_thresh_dino),

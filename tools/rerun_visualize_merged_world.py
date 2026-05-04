@@ -37,8 +37,8 @@ def _as_np(x, dtype=np.float32):
 def parse_room_json(js: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[List[str]], str]:
     """Return centers, sizes, Rmats, scores, labels, convention for the new schema.
 
-    `labels` is None when no object has a meaningful `label` field — caller
-    decides whether to display them.
+    `labels` is None when no object has a meaningful ``category`` (Grounding-DINO).
+    ``label`` (BLIP) is stored in JSON but is not used for Rerun display text.
     """
     objects = js.get("objects") or []
     if not objects:
@@ -48,11 +48,11 @@ def parse_room_json(js: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.nd
     Rmats = np.asarray([o["R_3x3"] for o in objects], dtype=np.float32)
     scores = np.asarray([float(o.get("score", 0.0)) for o in objects], dtype=np.float32)
 
-    has_real_labels = any(o.get("label") for o in objects)
+    has_real_labels = any(o.get("category") for o in objects)
     if has_real_labels:
         labels: Optional[List[str]] = []
         for o in objects:
-            lab = o.get("label")
+            lab = o.get("category")
             s = float(o.get("score", 0.0))
             labels.append(f"{lab} ({s:.2f})" if lab else f"({s:.2f})")
     else:
@@ -104,7 +104,8 @@ def main():
     label_grp.add_argument(
         "--show-labels",
         action="store_true",
-        help="Force labels on. Default shows labels only when objects have a non-null 'label' field.",
+        help="Force labels on. Default shows labels when objects have non-null "
+        "'category' (Grounding-DINO only; 'label'/BLIP is not shown here).",
     )
     label_grp.add_argument(
         "--hide-labels",

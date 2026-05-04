@@ -98,18 +98,22 @@ def main():
     ap.add_argument(
         "--label",
         action="store_true",
-        help="After CuTR, run BLIP/Grounding-DINO to enrich each detection with label/category.",
+        help="After CuTR, run labeling backend to enrich each detection with label/category.",
     )
     ap.add_argument(
         "--label-backend",
         default="both",
-        choices=("blip", "dino", "both", "none"),
-        help="Which labeling models to load. Default: both.",
+        choices=(
+            "blip", "dino", "owlv2",
+            "both", "both_owl", "none",
+        ),
+        help="Which labeling models to load. Default: both (BLIP+DINO).",
     )
     ap.add_argument(
         "--vocab",
         default=None,
-        help="Path to vocab file (one class per line). Default: tools/labeling_vocab_default.txt",
+        help="Path to vocab file (one class per line) for DINO/OWL-ViT. "
+        "Default: tools/labeling_vocab_default.txt",
     )
     ap.add_argument(
         "--blip-model",
@@ -122,10 +126,15 @@ def main():
         help="HF model id for Grounding-DINO.",
     )
     ap.add_argument(
+        "--owlv2-model",
+        default="google/owlv2-base-patch16-ensemble",
+        help="HF model id for OWL-ViT v2.",
+    )
+    ap.add_argument(
         "--iou-min",
         type=float,
         default=0.3,
-        help="Min IoU for matching CuTR bbox to a Grounding-DINO output.",
+        help="Min IoU for matching CuTR bbox to a detector output (DINO/OWL-ViT).",
     )
     args = ap.parse_args()
 
@@ -206,11 +215,16 @@ def main():
             device=args.device,
             blip_model=args.blip_model,
             dino_model=args.dino_model,
+            owlv2_model=args.owlv2_model,
             iou_min=float(args.iou_min),
         )
         labeler.label_detections(img_for_label, pred["detections"])
-        n_labeled = sum(1 for d in pred["detections"] if d.get("label") or d.get("category"))
-        print(f"Labeled {n_labeled}/{len(pred['detections'])} detections.")
+        n_cat = sum(1 for d in pred["detections"] if d.get("category"))
+        n_cap = sum(1 for d in pred["detections"] if d.get("label"))
+        print(
+            f"Labeling done ({args.label_backend}): {n_cat}/{len(pred['detections'])} with category, "
+            f"{n_cap}/{len(pred['detections'])} with caption."
+        )
 
     out_json = (
         Path(args.out_json) if args.out_json

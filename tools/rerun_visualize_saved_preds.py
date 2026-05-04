@@ -56,6 +56,13 @@ def main():
         default=None,
         help="Optional Rerun application id (defaults to <video_id>).",
     )
+    ap.add_argument(
+        "--labels",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show text on 2D strips and 3D boxes (captions, categories, or cls/score). "
+        "Use --no-labels to draw only the geometry.",
+    )
     args = ap.parse_args()
 
     img_path = Path(args.image)
@@ -101,7 +108,7 @@ def main():
         boxes2d.append([x1, y1, x2, y2])
         score = det.get("score", None)
         class_id = det.get("class_id", None)
-        text_label = det.get("label") or det.get("category")
+        text_label = det.get("category")
         if text_label:
             any_text_label = True
             score_str = f" {float(score):.2f}" if score is not None else ""
@@ -123,6 +130,11 @@ def main():
             )
 
         colors.append(list(_color_for_index(i)))
+
+    if not args.labels:
+        labels = [""] * len(labels)
+        labels_3d = [""] * len(labels_3d)
+        any_text_label = False
 
     if boxes2d:
         # Rerun SDK APIs differ across versions; LineStrips2D works reliably on older versions (e.g. 0.19.x).

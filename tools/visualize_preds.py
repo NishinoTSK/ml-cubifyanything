@@ -83,7 +83,8 @@ def draw_predictions(
             draw.rectangle([x1 - i, y1 - i, x2 + i, y2 + i], outline=color)
 
         if show_labels:
-            caption = det.get("label") or det.get("category") or f"cls={class_id}"
+            cat = det.get("category")
+            caption = cat if cat else f"cls={class_id}"
             label = str(caption)
             if score is not None:
                 label += f" {float(score):.2f}"
