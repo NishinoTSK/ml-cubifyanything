@@ -38,11 +38,15 @@ pip install ultralytics   # necessário apenas para YOLO-World
 
 Rodar inferencia na sua imagem
 
-WGPU_BACKEND=vulkan python tools/infer_image.py --image "teste/1.jpeg" --model-path models/cutr_rgb.pth --device cuda --score-thresh 0.25
+python tools/infer_image.py \
+    --image teste/passthrough_20260503_140304.png \
+    --meta-json teste/passthrough_20260503_140304.json \
+    --model-path models/cutr_rgb.pth --device cuda \
+    --max-edge 0 --score-thresh 0.35 --label --label-backend all
 
-python tools/visualize_preds.py --image "teste/1.jpeg" --pred-json "teste/1_inf.json"
+python tools/visualize_preds.py --image teste/passthrough_20260503_140304.png --pred-json teste/passthrough_20260503_140304_inf.json --category-from label
 
-WGPU_BACKEND=vulkan python tools/rerun_visualize_saved_preds.py --image "teste/1.jpeg" --pred-json "teste/1_inf.json"
+python tools/rerun_visualize_saved_preds.py --image "teste/passthrough_20260503_140304.png" --pred-json "teste/passthrough_20260503_140304_inf.json" --no-labels
 
 ---
 
