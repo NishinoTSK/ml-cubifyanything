@@ -34,11 +34,12 @@ def _as_np(x, dtype=np.float32):
     return arr
 
 
-def parse_room_json(js: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[List[str]], str]:
+def parse_room_json(js: dict, category_key: str = "category") -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[List[str]], str]:
     """Return centers, sizes, Rmats, scores, labels, convention for the new schema.
 
-    `labels` is None when no object has a meaningful ``category`` (Grounding-DINO).
+    `labels` is None when no object has a meaningful ``category`` field.
     ``label`` (BLIP) is stored in JSON but is not used for Rerun display text.
+    The `category_key` parameter lets you pick `category`, `category_dino`, etc.
     """
     objects = js.get("objects") or []
     if not objects:
@@ -48,11 +49,11 @@ def parse_room_json(js: dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.nd
     Rmats = np.asarray([o["R_3x3"] for o in objects], dtype=np.float32)
     scores = np.asarray([float(o.get("score", 0.0)) for o in objects], dtype=np.float32)
 
-    has_real_labels = any(o.get("category") for o in objects)
+    has_real_labels = any(o.get(category_key) for o in objects)
     if has_real_labels:
         labels: Optional[List[str]] = []
         for o in objects:
-            lab = o.get("category")
+            lab = o.get(category_key)
             s = float(o.get("score", 0.0))
             labels.append(f"{lab} ({s:.2f})" if lab else f"({s:.2f})")
     else:
@@ -101,16 +102,22 @@ def main():
     ap.add_argument("--application-id", default="room_map", help="Rerun application id")
     ap.add_argument("--rrd-out", default=None, help="Optional .rrd output path. Default: <input>.rrd")
     label_grp = ap.add_mutually_exclusive_group()
-    label_grp.add_argument(
+    ap.add_argument(
         "--show-labels",
         action="store_true",
         help="Force labels on. Default shows labels when objects have non-null "
-        "'category' (Grounding-DINO only; 'label'/BLIP is not shown here).",
+        "'category' (DINO/OWL/YOLO; 'label'/BLIP is not shown here).",
     )
     label_grp.add_argument(
         "--hide-labels",
         action="store_true",
-        help="Force labels off (default behavior when 'label' fields are null).",
+        help="Force labels off (default behavior when label fields are null).",
+    )
+    ap.add_argument(
+        "--category-from",
+        default="category",
+        choices=("category", "category_dino", "category_owlv2", "category_yolo"),
+        help="Which field to use as display label. Default: category (legacy canonical).",
     )
     args = ap.parse_args()
 
@@ -125,7 +132,7 @@ def main():
     js = _load_json(src_path)
 
     if "objects" in js:
-        centers, sizes, Rmats, scores, labels, convention = parse_room_json(js)
+        centers, sizes, Rmats, scores, labels, convention = parse_room_json(js, category_key=args.category_from)
         print(f"Detected schema: room.json ({len(centers)} objects, convention={convention})")
     else:
         centers, sizes, Rmats, scores, labels, convention = parse_legacy_json(js)

@@ -54,6 +54,7 @@ def label_room(
     blip_model: str,
     dino_model: str,
     owlv2_model: str,
+    yolo_model: str,
     iou_min: float,
     score_thresh_dino: float,
     text_thresh_dino: float,
@@ -79,6 +80,7 @@ def label_room(
         blip_model=blip_model,
         dino_model=dino_model,
         owlv2_model=owlv2_model,
+        yolo_model=yolo_model,
         iou_min=float(iou_min),
         score_thresh_dino=float(score_thresh_dino),
         text_thresh_dino=float(text_thresh_dino),
@@ -127,6 +129,14 @@ def label_room(
             obj["label"] = sd.get("label")
             obj["category"] = sd.get("category")
             obj["category_score"] = sd.get("category_score")
+            # Copy prefixed fields when running multiple detectors.
+            for pfx in ("dino", "owlv2", "yolo"):
+                key = f"category_{pfx}"
+                score_key = f"category_score_{pfx}"
+                if key in sd:
+                    obj[key] = sd[key]
+                if score_key in sd:
+                    obj[score_key] = sd[score_key]
             if obj.get("label"):
                 n_labeled += 1
             if obj.get("category"):
@@ -162,8 +172,8 @@ def main():
         "--label-backend",
         default="both",
         choices=(
-            "blip", "dino", "owlv2",
-            "both", "both_owl", "none",
+            "blip", "dino", "owlv2", "yolo",
+            "both", "both_owl", "both_yolo", "all", "none",
         ),
         help="Which labeling models to load. Default: both.",
     )
@@ -176,6 +186,7 @@ def main():
     ap.add_argument("--blip-model", default="Salesforce/blip-image-captioning-base")
     ap.add_argument("--dino-model", default="IDEA-Research/grounding-dino-tiny")
     ap.add_argument("--owlv2-model", default="google/owlv2-base-patch16-ensemble")
+    ap.add_argument("--yolo-model", default="yolov8l-worldv2.pt", help="Ultralytics checkpoint for YOLO-World.")
     ap.add_argument("--iou-min", type=float, default=0.3)
     ap.add_argument("--score-thresh-dino", type=float, default=0.25)
     ap.add_argument("--text-thresh-dino", type=float, default=0.20)
@@ -191,6 +202,7 @@ def main():
         blip_model=args.blip_model,
         dino_model=args.dino_model,
         owlv2_model=args.owlv2_model,
+        yolo_model=args.yolo_model,
         iou_min=float(args.iou_min),
         score_thresh_dino=float(args.score_thresh_dino),
         text_thresh_dino=float(args.text_thresh_dino),

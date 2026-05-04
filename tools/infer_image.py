@@ -94,7 +94,6 @@ def main():
         default=None,
         help="Optional depth image path (UInt16 PNG in millimeters). Required for RGB-D models.",
     )
-    # Labeling (BLIP free-form caption + Grounding-DINO open-vocab category).
     ap.add_argument(
         "--label",
         action="store_true",
@@ -104,8 +103,8 @@ def main():
         "--label-backend",
         default="both",
         choices=(
-            "blip", "dino", "owlv2",
-            "both", "both_owl", "none",
+            "blip", "dino", "owlv2", "yolo",
+            "both", "both_owl", "both_yolo", "all", "none",
         ),
         help="Which labeling models to load. Default: both (BLIP+DINO).",
     )
@@ -129,6 +128,11 @@ def main():
         "--owlv2-model",
         default="google/owlv2-base-patch16-ensemble",
         help="HF model id for OWL-ViT v2.",
+    )
+    ap.add_argument(
+        "--yolo-model",
+        default="yolov8l-worldv2.pt",
+        help="Ultralytics checkpoint for YOLO-World (e.g. yolov8l-worldv2.pt).",
     )
     ap.add_argument(
         "--iou-min",
@@ -216,6 +220,7 @@ def main():
             blip_model=args.blip_model,
             dino_model=args.dino_model,
             owlv2_model=args.owlv2_model,
+            yolo_model=args.yolo_model,
             iou_min=float(args.iou_min),
         )
         labeler.label_detections(img_for_label, pred["detections"])

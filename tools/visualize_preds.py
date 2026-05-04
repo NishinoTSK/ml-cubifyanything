@@ -46,6 +46,7 @@ def draw_predictions(
     score_thresh: float = 0.0,
     show_labels: bool = True,
     line_width: int = 3,
+    category_from: str = "category",
 ):
     img = image.convert("RGB")
     draw = ImageDraw.Draw(img)
@@ -83,7 +84,8 @@ def draw_predictions(
             draw.rectangle([x1 - i, y1 - i, x2 + i, y2 + i], outline=color)
 
         if show_labels:
-            cat = det.get("category")
+            cat_key = f"category_{category_from}" if category_from in ("dino", "owlv2", "yolo") else "category"
+            cat = det.get(cat_key) or det.get("category")
             caption = cat if cat else f"cls={class_id}"
             label = str(caption)
             if score is not None:
@@ -116,6 +118,12 @@ def main():
     ap.add_argument("--out", default=None, help="Output image path. Default: <image>_inf.png")
     ap.add_argument("--score-thresh", type=float, default=0.0, help="Filter detections below this score.")
     ap.add_argument("--no-labels", action="store_true", help="Do not render labels.")
+    ap.add_argument(
+        "--category-from",
+        default="category",
+        choices=("category", "category_dino", "category_owlv2", "category_yolo"),
+        help="Which category field to display on boxes. Default: category (legacy canonical).",
+    )
     ap.add_argument("--line-width", type=int, default=3, help="Box line width in pixels.")
     args = ap.parse_args()
 
@@ -135,6 +143,7 @@ def main():
         score_thresh=args.score_thresh,
         show_labels=not args.no_labels,
         line_width=args.line_width,
+        category_from=args.category_from,
     )
 
     out_path = Path(args.out) if args.out else img_path.with_name(img_path.stem + "_inf.png")

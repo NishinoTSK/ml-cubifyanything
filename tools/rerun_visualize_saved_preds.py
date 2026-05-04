@@ -63,6 +63,12 @@ def main():
         help="Show text on 2D strips and 3D boxes (captions, categories, or cls/score). "
         "Use --no-labels to draw only the geometry.",
     )
+    ap.add_argument(
+        "--category-from",
+        default="category",
+        choices=("category", "category_dino", "category_owlv2", "category_yolo"),
+        help="Which category field to display. Default: category (legacy canonical).",
+    )
     args = ap.parse_args()
 
     img_path = Path(args.image)
@@ -100,6 +106,7 @@ def main():
     labels_3d = []
     colors = []
     any_text_label = False
+    cat_key = f"category_{args.category_from}" if args.category_from in ("dino", "owlv2", "yolo") else "category"
     for i, det in enumerate(dets):
         bbox = det.get("bbox_xyxy", None)
         if not bbox or len(bbox) != 4:
@@ -108,7 +115,7 @@ def main():
         boxes2d.append([x1, y1, x2, y2])
         score = det.get("score", None)
         class_id = det.get("class_id", None)
-        text_label = det.get("category")
+        text_label = det.get(cat_key) or det.get("category")
         if text_label:
             any_text_label = True
             score_str = f" {float(score):.2f}" if score is not None else ""

@@ -84,19 +84,19 @@ def _crop_with_padding(img: Image.Image, bbox: Sequence[float], pad: int = 4) ->
 
 class Labeler:
     """Open-vocab labeler combining BLIP captions, Grounding-DINO, OWL-ViT v2,
-    and RAM categories.
+    and YOLO-World categories.
 
     Parameters
     ----------
-    backend : ``"blip" | "dino" | "owlv2" | "ram" | "both" | "both_owl" | "both_ram" | "none"``
+    backend : ``"blip" | "dino" | "owlv2" | "yolo" | "both" | "both_owl" | "both_yolo" | "none"``
         Which models to load and run. ``"none"`` disables labeling.
     vocab_path : optional path
-        File with the closed-set vocabulary for Grounding-DINO / OWL-ViT.
+        File with the closed-set vocabulary for Grounding-DINO / OWL-ViT / YOLO-World.
         Defaults to ``tools/labeling_vocab_default.txt``.
     device : ``"cpu" | "cuda" | "mps"``.
-    blip_model, dino_model, owlv2_model, ram_model : HuggingFace model ids.
+    blip_model, dino_model, owlv2_model, yolo_model : HuggingFace model ids or Ultralytics checkpoint paths.
     iou_min : float
-        Minimum IoU between a CuTR bbox and a detector output (DINO or OWL-ViT)
+        Minimum IoU between a CuTR bbox and a detector output (DINO / OWL-ViT / YOLO-World)
         for the label to be accepted as the CuTR detection's category.
     score_thresh_dino, text_thresh_dino : float
         Grounding-DINO post-processing thresholds.
@@ -110,22 +110,24 @@ class Labeler:
         blip_model: str = "Salesforce/blip-image-captioning-base",
         dino_model: str = "IDEA-Research/grounding-dino-tiny",
         owlv2_model: str = "google/owlv2-base-patch16-ensemble",
+        yolo_model: str = "yolov8l-worldv2.pt",
         iou_min: float = 0.3,
         score_thresh_dino: float = 0.25,
         text_thresh_dino: float = 0.20,
     ):
         valid_backends = (
-            "blip", "dino", "owlv2",
-            "both", "both_owl", "none",
+            "blip", "dino", "owlv2", "yolo",
+            "both", "both_owl", "both_yolo", "all", "none",
         )
         if backend not in valid_backends:
             raise ValueError(
                 f"backend must be one of {valid_backends}, got {backend!r}"
             )
         self.backend = backend
-        self.use_blip = backend in ("blip", "both", "both_owl")
-        self.use_dino = backend in ("dino", "both")
-        self.use_owlv2 = backend in ("owlv2", "both_owl")
+        self.use_blip = backend in ("blip", "both", "both_owl", "both_yolo", "all")
+        self.use_dino = backend in ("dino", "both", "both_yolo", "all")
+        self.use_owlv2 = backend in ("owlv2", "both_owl", "all")
+        self.use_yolo = backend in ("yolo", "both_yolo", "all")
         self.device = device
         self.iou_min = float(iou_min)
         self.score_thresh_dino = float(score_thresh_dino)
@@ -137,11 +139,12 @@ class Labeler:
         self._dino_model = None
         self._owlv2_proc = None
         self._owlv2_model = None
+        self._yolo_model = None
 
         self.vocab: List[str] = []
         self.vocab_prompt: str = ""
 
-        if self.use_dino or self.use_owlv2:
+        if self.use_dino or self.use_owlv2 or self.use_yolo:
             self.vocab = load_vocab(vocab_path)
             self.vocab_prompt = vocab_to_prompt(self.vocab)
 
@@ -149,6 +152,8 @@ class Labeler:
             self._load_dino(dino_model)
         if self.use_owlv2:
             self._load_owlv2(owlv2_model)
+        if self.use_yolo:
+            self._load_yolo(yolo_model)
         if self.use_blip:
             self._load_blip(blip_model)
 
@@ -187,6 +192,22 @@ class Labeler:
         self._owlv2_proc = Owlv2Processor.from_pretrained(model_id)
         m = Owlv2ForObjectDetection.from_pretrained(model_id)
         self._owlv2_model = m.to(self.device).eval()
+
+    def _load_yolo(self, model_id: str):
+        try:
+            from ultralytics import YOLOWorld
+        except ImportError as e:
+            raise ImportError(
+                "ultralytics is required for the YOLO-World backend. "
+                "Install with: pip install ultralytics"
+            ) from e
+        m = YOLOWorld(model_id)
+        # Ensure model device matches our requested device
+        device_map = self.device if self.device != "mps" else "cpu"
+        m.to(device_map)
+        m.fuse()   # fuse conv+bn for faster inference
+        m.eval()
+        self._yolo_model = m
 
     @torch.no_grad()
     def _caption_crop(self, crop: Image.Image) -> Optional[str]:
@@ -395,24 +416,62 @@ class Labeler:
             merged["boxes"].extend(out["boxes"])
         return merged
 
+    def _yolo_full_image(self, image: Image.Image) -> Dict[str, list]:
+        """Run YOLO-World on the full image with the current vocab.
+        Returns boxes in original-image pixel space (xyxy).
+        """
+        empty: Dict[str, list] = {"scores": [], "labels": [], "boxes": []}
+        if self._yolo_model is None or not self.vocab:
+            return empty
+
+        self._yolo_model.set_classes(self.vocab)
+        results = self._yolo_model(image, verbose=False)
+        if not results:
+            return empty
+
+        r = results[0]
+        boxes = r.boxes
+        if boxes is None or len(boxes) == 0:
+            return empty
+
+        out_boxes = boxes.xyxy.cpu().tolist()  # [N, 4]
+        out_scores = boxes.conf.cpu().tolist()  # [N]
+        # class indices in the current vocab
+        cls_indices = boxes.cls.cpu().long().tolist()  # [N]
+        out_labels = [self.vocab[int(idx)] if 0 <= int(idx) < len(self.vocab) else "" for idx in cls_indices]
+
+        return {"scores": out_scores, "labels": out_labels, "boxes": out_boxes}
+
     def _match_detector_to_detections(
         self,
         detections: List[Dict],
         detector_out: Dict[str, list],
+        prefix: str = "",
     ) -> None:
-        """Match detector outputs (DINO or OWL-ViT) to CuTR detections by IoU.
-        Modifies detections in-place: sets category and category_score.
+        """Match detector outputs (DINO / OWL-ViT / YOLO) to CuTR detections by IoU.
+        Modifies detections in-place: sets category, category_score, and
+        category_<prefix> / category_score_<prefix> when prefix is given.
         """
+        cat_key = f"category_{prefix}" if prefix else "category"
+        score_key = f"category_score_{prefix}" if prefix else "category_score"
+
         if not detector_out or not detector_out["boxes"]:
             for det in detections:
-                det["category"] = None
-                det["category_score"] = None
+                det[cat_key] = None
+                det[score_key] = None
+                # Also update the legacy canonical keys for backward compat.
+                if not prefix:
+                    det["category"] = None
+                    det["category_score"] = None
             return
         for det in detections:
             bbox = det.get("bbox_xyxy")
             if not bbox or len(bbox) != 4:
-                det["category"] = None
-                det["category_score"] = None
+                det[cat_key] = None
+                det[score_key] = None
+                if not prefix:
+                    det["category"] = None
+                    det["category_score"] = None
                 continue
             best_iou = -1.0
             best_idx = -1
@@ -422,11 +481,15 @@ class Labeler:
                     best_iou = iou
                     best_idx = k
             if best_idx >= 0 and best_iou >= self.iou_min:
-                det["category"] = detector_out["labels"][best_idx] or None
-                det["category_score"] = float(detector_out["scores"][best_idx])
+                det[cat_key] = detector_out["labels"][best_idx] or None
+                det[score_key] = float(detector_out["scores"][best_idx])
             else:
-                det["category"] = None
-                det["category_score"] = None
+                det[cat_key] = None
+                det[score_key] = None
+            # Mirror into legacy canonical keys when no prefix (single backend).
+            if not prefix:
+                det["category"] = det[cat_key]
+                det["category_score"] = det[score_key]
 
     def label_detections(
         self,
@@ -446,9 +509,10 @@ class Labeler:
 
         rgb = image.convert("RGB")
 
-        # Run image-wide detectors once (DINO and OWL-ViT share IoU-matching).
+        # Run image-wide detectors once (DINO, OWL-ViT, YOLO share IoU-matching).
         dino_out = self._dino_full_image(rgb) if self.use_dino else None
         owlv2_out = self._owlv2_full_image(rgb) if self.use_owlv2 else None
+        yolo_out = self._yolo_full_image(rgb) if self.use_yolo else None
 
         for det in detections:
             bbox = det.get("bbox_xyxy")
@@ -465,11 +529,24 @@ class Labeler:
             else:
                 det.setdefault("label", None)
 
-            # --- Detector-based category (DINO or OWL-ViT -> IoU match) ---
-            if self.use_dino and dino_out:
-                self._match_detector_to_detections([det], dino_out)
-            elif self.use_owlv2 and owlv2_out:
-                self._match_detector_to_detections([det], owlv2_out)
+            # --- Detector-based category (DINO / OWL-ViT / YOLO -> IoU match) ---
+            # Each detector writes its own prefixed keys so the visualizer can pick.
+            if dino_out is not None:
+                self._match_detector_to_detections([det], dino_out, prefix="dino")
+            if owlv2_out is not None:
+                self._match_detector_to_detections([det], owlv2_out, prefix="owlv2")
+            if yolo_out is not None:
+                self._match_detector_to_detections([det], yolo_out, prefix="yolo")
+
+            # Populate legacy canonical keys for backward compat (first non-None wins).
+            for pfx, out in (("dino", dino_out), ("owlv2", owlv2_out), ("yolo", yolo_out)):
+                if out is not None:
+                    cat_val = det.get(f"category_{pfx}")
+                    score_val = det.get(f"category_score_{pfx}")
+                    if cat_val is not None:
+                        det.setdefault("category", cat_val)
+                        det.setdefault("category_score", score_val)
+                        break
             else:
                 det.setdefault("category", None)
                 det.setdefault("category_score", None)

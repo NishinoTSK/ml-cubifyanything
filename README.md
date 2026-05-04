@@ -270,27 +270,32 @@ Valores típicos para referência:
 
 ---
 
-## Etiquetagem de Objetos (BLIP + Grounding-DINO / OWL-ViT v2)
+## Etiquetagem de Objetos (BLIP + Grounding-DINO / OWL-ViT v2 / YOLO-World)
 
-O CuTR só devolve `class_id` numérico. Para responder "onde está o sofá marrom?" você precisa de **rótulos semânticos**. O etiquetador opcional suporta **três backends**, todos no mesmo módulo (`tools/labeler.py`):
+O CuTR só devolve `class_id` numérico. Para responder "onde está o sofá marrom?" você precisa de **rótulos semânticos**. O etiquetador opcional suporta **quatro backends**, todos no mesmo módulo (`tools/labeler.py`):
 
 | Backend | Tipo | Saída | Quando usar |
 |---|---|---|---|
 | **BLIP** (`Salesforce/blip-image-captioning-base`) | Caption por crop | `label`: `"a wooden dining chair"` | Respostas ricas em linguagem natural |
 | **Grounding-DINO** (`IDEA-Research/grounding-dino-tiny`) | Detecção open-vocab na imagem inteira + IoU match | `category` + `category_score` | Categorias padronizadas com confiança |
 | **OWL-ViT v2** (`google/owlv2-base-patch16-ensemble`) | Detecção open-vocab na imagem inteira + IoU match | `category` + `category_score` | Alternativa ao DINO; geralmente mais preciso em bboxes pequenas |
+| **YOLO-World** (`yolov8l-worldv2.pt`) | Detecção open-vocab na imagem inteira + IoU match | `category` + `category_score` | Muito mais rápido que DINO/OWL (~52 FPS no V100); ideal para batch/lote |
 
 Todos são plugados nos mesmos dois pontos: `infer_image.py --label` e `label_room.py`.
+
+Você pode rodar **vários backends de categoria ao mesmo tempo** (ex.: `both_yolo` roda BLIP + DINO + YOLO). Cada detector escreve suas próprias chaves no JSON (`category_dino`, `category_yolo`, etc.) e a chave legada `category` espelha o primeiro que retornar um match. Nos visualizadores, use `--category-from` para escolher qual campo exibir.
 
 ### Dependências
 
 ```bash
 pip install transformers accelerate
+pip install ultralytics   # necessário apenas para YOLO-World
 ```
 
-Primeira execução baixa modelos para `~/.cache/huggingface`:
+Primeira execução baixa modelos para `~/.cache/huggingface` (e `~/.cache/ultralytics` para o YOLO):
 - BLIP base + DINO tiny: ~1-2 GB
 - OWL-ViT v2: ~1.5 GB extras
+- YOLO-World large: ~170 MB extras (CNN, mais leve e rápido)
 
 ### Caminho 1 — Inferência única com etiquetagem
 
@@ -308,27 +313,30 @@ WGPU_BACKEND=vulkan python tools/infer_image.py \
 
 Flags disponíveis:
 
-
 | Flag              | Descrição                                          | Default                                 |
 | ----------------- | -------------------------------------------------- | --------------------------------------- |
 | `--label`         | Liga a etiquetagem (sem isso, comportamento atual) | off                                     |
-| `--label-backend` | `blip` \| `dino` \| `owlv2` \| `both` \| `both_owl` \| `none` | `both` |
-| `--vocab`         | Arquivo com classes (uma por linha) para o DINO/OWL | `tools/labeling_vocab_default.txt`     |
+| `--label-backend` | `blip` \| `dino` \| `owlv2` \| `yolo` \| `both` \| `both_owl` \| `both_yolo` \| `all` \| `none` | `both` |
+| `--vocab`         | Arquivo com classes (uma por linha) para DINO/OWL/YOLO | `tools/labeling_vocab_default.txt`     |
 | `--blip-model`    | HF model id para BLIP                              | `Salesforce/blip-image-captioning-base` |
 | `--dino-model`    | HF model id para Grounding-DINO                    | `IDEA-Research/grounding-dino-tiny`     |
 | `--owlv2-model`   | HF model id para OWL-ViT v2                        | `google/owlv2-base-patch16-ensemble`    |
-| `--iou-min`       | IoU mínima do match DINO/OWL contra a bbox do CuTR | `0.3`                                   |
+| `--yolo-model`    | Ultralytics checkpoint para YOLO-World             | `yolov8l-worldv2.pt`                    |
+| `--iou-min`       | IoU mínima do match detector contra a bbox do CuTR | `0.3`                                   |
 
 **Backends disponíveis:**
 - `blip` — só BLIP (caption livre)
 - `dino` — só Grounding-DINO (categoria padronizada + score)
 - `owlv2` — só OWL-ViT v2 (categoria padronizada + score; geralmente mais preciso que DINO em bboxes pequenas)
+- `yolo` — só YOLO-World (categoria padronizada + score; **mais rápido**, útil para batch/lote)
 - `both` — BLIP + DINO (padrão)
 - `both_owl` — BLIP + OWL-ViT v2
+- `both_yolo` — BLIP + DINO + YOLO-World (mais rico, todos os campos prefixados no JSON)
+- `all` — BLIP + DINO + OWL-ViT v2 + YOLO-World (todos os backends de uma vez)
 - `none` — desabilita etiquetagem
 
 
-O `*_inf.json` ganha três campos por detecção:
+O `*_inf.json` ganha os campos por detecção. Quando um único detector é usado (`dino`, `owlv2` ou `yolo`), a estrutura é simples:
 
 ```json
 {
@@ -348,9 +356,42 @@ O `*_inf.json` ganha três campos por detecção:
 }
 ```
 
-`label` fica `null` quando o BLIP não devolve nada; `category`/`category_score` ficam `null` quando nenhuma saída do DINO atinge `iou-min`.
+Quando **múltiplos backends** rodam (ex.: `both_yolo`), cada detector escreve suas próprias chaves para que você possa comparar posteriormente:
 
-Nos visualizadores (`visualize_preds.py`, `rerun_visualize_saved_preds.py`, `rerun_visualize_merged_world.py`) o texto da caixa usa **só** `category`. Sem categoria, mostra `cls=N` + score; o `label` permanece no JSON (ex.: busca semântica no app) mas **não** é usado como fallback na tela.
+```json
+{
+  "detections": [
+    {
+      "label": "a wooden dining chair",
+      "category": "chair",
+      "category_score": 0.78,
+      "category_dino": "chair",
+      "category_score_dino": 0.78,
+      "category_owlv2": "armchair",
+      "category_score_owlv2": 0.61,
+      "category_yolo": "chair",
+      "category_score_yolo": 0.91
+    }
+  ]
+}
+```
+
+- `category`/`category_score` espelham o primeiro backend (na ordem: DINO → OWL → YOLO) que devolveu match.
+- `category_*prefixed*`/`category_score_*prefixed*` ficam `null` quando o detector respectivo não encontrou correspondência IoU.
+
+`label` é sempre `null` quando o BLIP não devolve caption; `category`/`category_score` ficam `null` quando nenhum detector atinge `iou-min`.
+
+Nos visualizadores (`visualize_preds.py`, `rerun_visualize_saved_preds.py`, `rerun_visualize_merged_world.py`) o texto da caixa usa **só** `category` por padrão. Sem categoria, mostra `cls=N` + score; o `label` permanece no JSON (ex.: busca semântica no app) mas **não** é usado como fallback na tela.
+
+Use `--category-from` para escolher qual campo exibir quando múltiplos backends foram rodados:
+
+```bash
+python tools/visualize_preds.py --image teste/19.jpeg --pred-json teste/19_inf.json --category-from category_yolo
+python tools/rerun_visualize_saved_preds.py --image teste/19.jpeg --pred-json teste/19_inf.json --category-from category_dino
+python tools/rerun_visualize_merged_world.py --room-json teste/room.json --category-from category_owlv2
+```
+
+Valores aceitos: `category` (padrão), `category_dino`, `category_owlv2`, `category_yolo`.
 
 ```bash
 python tools/visualize_preds.py --image teste/19.jpeg --pred-json teste/19_inf.json
@@ -374,7 +415,7 @@ Para cada `obj` em `objects[*]`:
 1. Abre `<captures>/<evidence.best_frame>`.
 2. Cria um *crop* a partir de `evidence.best_bbox` (gravado pelo `scan_pipeline.py`).
 3. Chama `Labeler.label_detections` — o DINO roda **uma vez por imagem distinta** e os objetos do mesmo frame são todos atribuídos via IoU contra essa única passada.
-4. Escreve `label`, `category`, `category_score` no objeto.
+4. Escreve `label`, `category`, `category_score` no objeto, mais os campos prefixados quando múltiplos backends são usados (`category_dino`, `category_yolo`, etc.).
 
 Resultado em `objects[*]`:
 
@@ -384,6 +425,10 @@ Resultado em `objects[*]`:
   "label": "a brown sofa",
   "category": "sofa",
   "category_score": 0.71,
+  "category_dino": "sofa",
+  "category_score_dino": 0.71,
+  "category_yolo": "couch",
+  "category_score_yolo": 0.88,
   "score": 0.83,
   "center_xyz": [...],
   "dims_lhw": [...],
@@ -403,11 +448,13 @@ Resultado em `objects[*]`:
 |---|---|---|
 | DINO | Inferência única (~5-15 detecções) | 5-10 s |
 | OWL-ViT v2 | Inferência única (~5-15 detecções) | 6-12 s |
+| YOLO-World | Inferência única (~5-15 detecções) | 1-3 s |
 | BLIP + DINO | `room.json` com ~25 objetos / ~10 imagens | 30-60 s |
 | BLIP + OWL-ViT v2 | `room.json` com ~25 objetos / ~10 imagens | 35-70 s |
+| BLIP + DINO + YOLO | `room.json` com ~25 objetos / ~10 imagens | 40-90 s |
 | Qualquer | Primeira execução (download de modelos) | +30-90 s extras |
 
-CPU funciona, mas é ~5-10× mais lento. Use `--label-backend owlv2` quando precisão de categoria for mais importante que DINO, ou `--label-backend both_owl` para ter BLIP + OWL-ViT juntos.
+CPU funciona, mas é ~5-10× mais lento. Use `--label-backend yolo` quando velocidade for prioridade (é ~5× mais rápido que DINO), `--label-backend owlv2` quando precisão de categoria em bboxes pequenas for mais importante, ou `--label-backend both_yolo` para ter todos os campos prefixados no JSON e escolher o melhor via `--category-from`.
 
 ### Compatibilidade
 
