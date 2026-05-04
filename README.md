@@ -483,7 +483,7 @@ CPU funciona, mas é ~5-10× mais lento. Use `--label-backend yolo` quando veloc
 
 ---
 
-## Pipeline de Reconstrução Persistente do Quarto (Quest 3 + Unity)
+## Pipeline de Reconstrução Persistente do Quarto (Quest 3 + Unity) - Tá horrivel isso aqui.
 
 Cenário-alvo: app Unity rodando no Meta Quest 3 que precisa responder "onde está X?" sem chamar o modelo a cada pergunta. A solução é **escanear o quarto uma vez**, gerar um `room.json` com todas as caixas 3D já no frame de mundo do Quest, e em runtime fazer só lookup local.
 
