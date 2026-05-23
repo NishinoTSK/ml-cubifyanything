@@ -13,6 +13,7 @@ for one-shot CLI scripts alike.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -510,10 +511,28 @@ class Labeler:
         rgb = image.convert("RGB")
 
         # Run image-wide detectors once (DINO, OWL-ViT, YOLO share IoU-matching).
-        dino_out = self._dino_full_image(rgb) if self.use_dino else None
-        owlv2_out = self._owlv2_full_image(rgb) if self.use_owlv2 else None
-        yolo_out = self._yolo_full_image(rgb) if self.use_yolo else None
+        if self.use_dino:
+            t0 = time.time()
+            dino_out = self._dino_full_image(rgb)
+            print(f"  DINO:          {time.time() - t0:.3f}s")
+        else:
+            dino_out = None
 
+        if self.use_owlv2:
+            t0 = time.time()
+            owlv2_out = self._owlv2_full_image(rgb)
+            print(f"  OWL-ViT v2:    {time.time() - t0:.3f}s")
+        else:
+            owlv2_out = None
+
+        if self.use_yolo:
+            t0 = time.time()
+            yolo_out = self._yolo_full_image(rgb)
+            print(f"  YOLO-World:    {time.time() - t0:.3f}s")
+        else:
+            yolo_out = None
+
+        blip_total = 0.0
         for det in detections:
             bbox = det.get("bbox_xyxy")
             if not bbox or len(bbox) != 4:
@@ -525,7 +544,9 @@ class Labeler:
             # --- BLIP free-form caption (crop-based) ---
             if self.use_blip:
                 crop = _crop_with_padding(rgb, bbox, pad=4)
+                t0 = time.time()
                 det["label"] = self._caption_crop(crop) if crop is not None else None
+                blip_total += time.time() - t0
             else:
                 det.setdefault("label", None)
 
@@ -550,5 +571,8 @@ class Labeler:
             else:
                 det.setdefault("category", None)
                 det.setdefault("category_score", None)
+
+        if self.use_blip:
+            print(f"  BLIP total:    {blip_total:.3f}s")
 
         return detections

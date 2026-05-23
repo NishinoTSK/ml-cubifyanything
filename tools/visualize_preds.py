@@ -130,6 +130,12 @@ def main():
              "Use 'label' to show the BLIP free-form caption instead of a class name.",
     )
     ap.add_argument("--line-width", type=int, default=3, help="Box line width in pixels.")
+    ap.add_argument(
+        "--crops-dir",
+        default=None,
+        help="Optional directory to save individual detection crops. "
+             "Crops are saved as crop_NNN.png.",
+    )
     args = ap.parse_args()
 
     img_path = Path(args.image)
@@ -139,8 +145,39 @@ def main():
     if not pred_path.exists():
         raise FileNotFoundError(f"Pred JSON not found: {pred_path}")
 
-    img = Image.open(str(img_path))
+    img = Image.open(str(img_path)).convert("RGB")
     preds = _load_json(str(pred_path))
+
+    # --- Save individual crops if requested ---
+    crops_dir = Path(args.crops_dir) if args.crops_dir else None
+    if crops_dir is not None:
+        os.makedirs(crops_dir, exist_ok=True)
+        w, h = img.size
+        dets = preds.get("detections", []) or []
+        crop_count = 0
+        for i, det in enumerate(dets):
+            score = det.get("score")
+            if score is not None and float(score) < args.score_thresh:
+                continue
+            bbox = det.get("bbox_xyxy")
+            if not bbox or len(bbox) != 4:
+                continue
+            x1, y1, x2, y2 = [float(v) for v in bbox]
+            x1 = _clamp(x1, 0.0, w - 1.0)
+            y1 = _clamp(y1, 0.0, h - 1.0)
+            x2 = _clamp(x2, 0.0, w - 1.0)
+            y2 = _clamp(y2, 0.0, h - 1.0)
+            x1_i = max(0, int(round(x1)))
+            y1_i = max(0, int(round(y1)))
+            x2_i = max(0, int(round(x2)))
+            y2_i = max(0, int(round(y2)))
+            if x2_i - x1_i < 2 or y2_i - y1_i < 2:
+                continue
+            crop = img.crop((x1_i, y1_i, x2_i, y2_i))
+            crop_name = f"crop_{i:03d}.png"
+            crop.save(crops_dir / crop_name)
+            crop_count += 1
+        print(f"Saved {crop_count} crops to {crops_dir}")
 
     out_img = draw_predictions(
         img,
