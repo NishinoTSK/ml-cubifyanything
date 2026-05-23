@@ -5,28 +5,48 @@ Este repositório é um fork do [apple/ml-cubifyanything](https://github.com/app
 ## Instalar o repositorio a partir do wsl
 
 git clone [https://github.com/NishinoTSK/ml-cubifyanything](https://github.com/NishinoTSK/ml-cubifyanything)
+
 cd ml_cubifyanythin
+
 virtualenv ambiente
+
 source ambiente/bin/activate
+
 Criar pasta models na pasta ml-cubifyanything e colocar os pesos dentro dela cutr_rgb.pth baixados daqui (RGB [https://github.com/apple/ml-cubifyanything?tab=readme-ov-file](https://github.com/apple/ml-cubifyanything?tab=readme-ov-file).)
+
 pip install torch torchvision 
+
 pip install scipy
+
 pip install timm
+
 pip install webdataset==0.2.86
+
 pip install Pillow
+
 pip install tifffile
+
 pip install cyclonedds-nightly
+
 pip install rerun-sdk==0.19.1
 
 pip install -e . --no-build-isolation
 
+pip install transformers accelerate
+
+pip install ultralytics   # necessário apenas para YOLO-World
+
 Rodar inferencia na sua imagem
 
-WGPU_BACKEND=vulkan python tools/infer_image.py --image "teste/1.jpeg" --model-path models/cutr_rgb.pth --device cuda --score-thresh 0.25
+python tools/infer_image.py \
+    --image teste/passthrough_20260503_140304.png \
+    --meta-json teste/passthrough_20260503_140304.json \
+    --model-path models/cutr_rgb.pth --device cuda \
+    --max-edge 0 --score-thresh 0.35 --label --label-backend all
 
-python tools/visualize_preds.py --image "teste/1.jpeg" --pred-json "teste/1_inf.json"
+python tools/visualize_preds.py --image teste/passthrough_20260503_140304.png --pred-json teste/passthrough_20260503_140304_inf.json --category-from label
 
-WGPU_BACKEND=vulkan python tools/rerun_visualize_saved_preds.py --image "teste/1.jpeg" --pred-json "teste/1_inf.json"
+python tools/rerun_visualize_saved_preds.py --image "teste/passthrough_20260503_140304.png" --pred-json "teste/passthrough_20260503_140304_inf.json" --no-labels
 
 ---
 
@@ -463,7 +483,7 @@ CPU funciona, mas é ~5-10× mais lento. Use `--label-backend yolo` quando veloc
 
 ---
 
-## Pipeline de Reconstrução Persistente do Quarto (Quest 3 + Unity)
+## Pipeline de Reconstrução Persistente do Quarto (Quest 3 + Unity) - Tá horrivel isso aqui.
 
 Cenário-alvo: app Unity rodando no Meta Quest 3 que precisa responder "onde está X?" sem chamar o modelo a cada pergunta. A solução é **escanear o quarto uma vez**, gerar um `room.json` com todas as caixas 3D já no frame de mundo do Quest, e em runtime fazer só lookup local.
 
