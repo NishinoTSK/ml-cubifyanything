@@ -8,7 +8,7 @@ git clone [https://github.com/NishinoTSK/ml-cubifyanything](https://github.com/N
 
 cd ml_cubifyanythin
 
-virtualenv ambiente
+virtualenv ambiente ou python3 -m venv ambiente
 
 source ambiente/bin/activate
 
